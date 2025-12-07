@@ -49,3 +49,7 @@ ray_results/
 *.bin
 *.safetensors
 
+# Markdown files except README.md
+*.md
+!README.md
+
