@@ -124,6 +124,7 @@ class BaseStageEngine:
         kv_transfer_manager: Optional[KVTransferManager] = None,
         nccl_init_method: Optional[str] = None,
         nccl_world_size: Optional[int] = None,
+        max_model_len: int = 32768,
     ):
         self.stage = stage
         self.model_path = model_path
