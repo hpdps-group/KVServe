@@ -333,6 +333,172 @@ class Worker:
         from kvserve.engine.worker_steps import step_decode_impl
         return step_decode_impl(self, batched_requests, kv_block_tables)
     
+    def compute_logprobs(
+        self,
+        context_tokens: List[int],
+        continuation_tokens: List[int],
+        block_ids: List[int],
+    ) -> tuple[float, bool]:
+        """
+        Compute log-likelihood of continuation given context.
+        Uses vLLM's ModelRunner with prompt_logprobs parameter.
+        
+        Args:
+            context_tokens: Token IDs for context
+            continuation_tokens: Token IDs for continuation
+            block_ids: Pre-allocated block IDs for this computation (from block_manager)
+            
+        Returns:
+            (logprob, is_greedy) tuple
+            - logprob: Sum of log probabilities of continuation tokens
+            - is_greedy: Whether continuation matches greedy decoding
+        """
+        from vllm.sequence import SequenceData, SequenceGroupMetadata
+        from vllm import SamplingParams
+        
+        # Combine context and continuation
+        full_tokens = context_tokens + continuation_tokens
+        ctx_len = len(context_tokens)
+        cont_len = len(continuation_tokens)
+        
+        # Truncate if too long (max_length from model config)
+        max_length = getattr(self.model_config.hf_config, 'max_position_embeddings', 2048)
+        if len(full_tokens) > max_length:
+            # Truncate from left, keep last max_length tokens
+            full_tokens = full_tokens[-max_length:]
+            # After truncation, update lengths
+            if len(full_tokens) < cont_len:
+                # Severe truncation: adjust continuation
+                continuation_tokens = full_tokens[-cont_len:] if len(full_tokens) >= cont_len else full_tokens
+                cont_len = len(continuation_tokens)
+                ctx_len = len(full_tokens) - cont_len
+            else:
+                # Context was truncated, continuation remains the same
+                ctx_len = len(full_tokens) - cont_len
+        
+        # Use provided block_ids (allocated by block_manager in evaluator)
+        # Ensure we have enough blocks for the sequence
+        num_blocks_needed = (len(full_tokens) + self.block_size - 1) // self.block_size
+        if len(block_ids) < num_blocks_needed:
+            # This shouldn't happen if block_manager allocated correctly
+            raise ValueError(f"Not enough blocks provided: need {num_blocks_needed}, got {len(block_ids)}")
+        
+        # Use only the blocks we need
+        temp_block_ids = block_ids[:num_blocks_needed]
+        
+        # Create SequenceData with full tokens (for prompt_logprobs, we need the full sequence)
+        # Use None for output_token_ids (like normal prefill) to avoid sampler assertion errors
+        seq_data = SequenceData.from_seqs(
+            prompt_token_ids=full_tokens,
+            output_token_ids=None,  # None for prefill stage, not empty list
+        )
+        
+        # Create SamplingParams with prompt_logprobs=1 to get logprobs for prompt tokens
+        sampling_params = SamplingParams(
+            temperature=0.0,  # Greedy for logprobs
+            prompt_logprobs=1,  # Request logprobs for prompt tokens
+            max_tokens=1,
+            detokenize=False,
+        )
+        
+        # Create SequenceGroupMetadata
+        seq_id = 0
+        seq_group_metadata = SequenceGroupMetadata(
+            request_id="logprob_compute",
+            is_prompt=True,
+            seq_data={seq_id: seq_data},
+            sampling_params=sampling_params,
+            block_tables={seq_id: temp_block_ids},  # Use pre-allocated blocks
+            do_sample=True,  # Must be True for vLLM to generate token and compute logprobs
+            pooling_params=None,
+            token_chunk_size=len(full_tokens),
+            lora_request=None,
+            computed_block_nums=[],
+            multi_modal_data=None,
+            multi_modal_placeholders=None,
+        )
+        
+        # Prepare model input
+        finished_requests_ids = []
+        model_input = self.model_runner.prepare_model_input(
+            [seq_group_metadata],
+            virtual_engine=0,
+            finished_requests_ids=finished_requests_ids
+        )
+        
+        # Execute model to get logprobs
+        seq_outs = self.model_runner.execute_model(model_input, [], None)
+        
+        if not seq_outs or len(seq_outs) == 0 or len(seq_outs[0]) == 0:
+            return 0.0, False
+        
+        # Extract prompt_logprobs from output
+        output = seq_outs[0][0]  # First (and only) sequence group output
+        prompt_logprobs = output.prompt_logprobs
+        
+        if prompt_logprobs is None:
+            return 0.0, False
+        
+        # Helper to extract logprob value (handles vLLM's Logprob object)
+        def coerce_logprob_to_num(logprob):
+            return getattr(logprob, "logprob", logprob)
+        
+        # Process prompt_logprobs
+        # prompt_logprobs is a list: [None, {token_id: logprob, ...}, ...]
+        # The first entry is None (no previous tokens to condition on)
+        # We need logprobs for continuation tokens (starting at ctx_len)
+        continuation_logprobs_dicts = [
+            {
+                token: coerce_logprob_to_num(logprob)
+                for token, logprob in logprob_dict.items()
+            }
+            if logprob_dict is not None
+            else None
+            for logprob_dict in prompt_logprobs
+        ]
+        
+        # Calculate continuation logprobs
+        # According to vLLM: prompt_logprobs[i] contains logprobs for predicting token at position i+1
+        # So for continuation tokens at positions [ctx_len, ctx_len+1, ..., ctx_len+cont_len-1]
+        # We need prompt_logprobs at positions [ctx_len-1, ctx_len, ..., ctx_len+cont_len-2]
+        # 
+        # Example: full_tokens = [a, b, c, d, e] where ctx_len=2, cont_len=3
+        #   full_tokens[0:2] = [a, b] (context)
+        #   full_tokens[2:5] = [c, d, e] (continuation)
+        #   prompt_logprobs[1] predicts full_tokens[2] (c) - continuation[0]
+        #   prompt_logprobs[2] predicts full_tokens[3] (d) - continuation[1]
+        #   prompt_logprobs[3] predicts full_tokens[4] (e) - continuation[2]
+        # So we use prompt_logprobs[ctx_len-1:ctx_len+cont_len-1] for continuation tokens
+        # 
+        # Note: If ctx_len == 0, we use prompt_logprobs[0:] (first token has no context)
+        
+        continuation_logprobs = 0.0
+        continuation_tokens_slice = full_tokens[ctx_len:ctx_len+cont_len]
+        
+        for i, token in enumerate(continuation_tokens_slice):
+            # prompt_logprobs[i] predicts token at position i+1
+            # So for continuation token at position ctx_len + i, we need prompt_logprobs[ctx_len + i - 1]
+            # But if ctx_len == 0, we use prompt_logprobs[i] (since first token is at position 0)
+            logprob_idx = max(0, ctx_len - 1 + i) if ctx_len > 0 else i
+            if logprob_idx < len(continuation_logprobs_dicts):
+                logprob_dict = continuation_logprobs_dicts[logprob_idx]
+                if logprob_dict is not None and token in logprob_dict:
+                    continuation_logprobs += logprob_dict[token]
+        
+        # Determine if greedy
+        is_greedy = True
+        for i, token in enumerate(continuation_tokens_slice):
+            logprob_idx = max(0, ctx_len - 1 + i) if ctx_len > 0 else i
+            if logprob_idx < len(continuation_logprobs_dicts):
+                logprob_dict = continuation_logprobs_dicts[logprob_idx]
+                if logprob_dict:
+                    top_token = max(logprob_dict, key=logprob_dict.get)
+                    if top_token != token:
+                        is_greedy = False
+                        break
+        
+        return float(continuation_logprobs), is_greedy
+    
     # ===== NCCL Transfer Methods =====
     
     def extract_kv_blocks(self, block_indices: List[int]) -> torch.Tensor:

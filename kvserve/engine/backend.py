@@ -32,6 +32,8 @@ class PDBackend:
         kv_transfer_method: str = "nccl",
         nccl_init_method: str = "tcp://localhost:29500",
         log_level: str = "WARNING",
+        max_model_len: int = 32768,
+        max_batch_size: int = 32,
     ):
         """
         Initialize PD Backend
@@ -78,6 +80,8 @@ class PDBackend:
         self.nccl_world_size = num_prefill_workers + num_decoding_workers
         
         # Engine configuration
+        self.max_model_len = max_model_len
+        self.max_batch_size = max_batch_size
         self.engine_config = {
             'model_path': model_path,
             'block_size': block_size,
@@ -89,6 +93,7 @@ class PDBackend:
             'kv_transfer_manager': self.kv_transfer_manager,
             'nccl_init_method': nccl_init_method,
             'nccl_world_size': self.nccl_world_size,
+            'max_model_len': max_model_len,
         }
         
         # Stage engines
@@ -113,6 +118,7 @@ class PDBackend:
         self.prefill_engine = PrefillEngine(
             prefill_decode_bridge_queue=self.prefill_decode_bridge_queue,
             num_workers=self.num_prefill_workers,
+            max_batch_size=self.max_batch_size,
             **self.engine_config
         )
         
@@ -120,6 +126,7 @@ class PDBackend:
         self.decode_engine = DecodeEngine(
             prefill_decode_bridge_queue=self.prefill_decode_bridge_queue,
             num_workers=self.num_decoding_workers,
+            max_batch_size=self.max_batch_size,
             **self.engine_config
         )
         
