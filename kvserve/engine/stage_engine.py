@@ -137,6 +137,7 @@ class BaseStageEngine:
         self.kv_transfer_manager = kv_transfer_manager
         self.nccl_init_method = nccl_init_method
         self.nccl_world_size = nccl_world_size
+        self.max_model_len = max_model_len
         
         # Workers
         self.workers: List[ray.ObjectRef] = []
@@ -174,6 +175,7 @@ class BaseStageEngine:
         """Initialize workers"""
         log_info(f"[{self.stage.value}Engine] Initializing {self.num_workers} workers...")
         
+        # First, initialize all workers and load models
         for worker_id in range(self.num_workers):
             # Calculate global rank
             global_rank = worker_id if self.stage == EngineStage.PREFILL else worker_id + self.num_workers
@@ -196,12 +198,38 @@ class BaseStageEngine:
             # Initialize worker
             await worker.ready.remote()
             await worker.init_model.remote()
+        
+        # ========================================================================
+        # ✅ DYNAMIC KV CACHE SIZING (vLLM standard approach)
+        # ========================================================================
+        # Profile GPU memory and calculate optimal block count
+        log_info(f"[{self.stage.value}Engine] Profiling GPU memory for KV cache sizing...")
+        block_profiles = await asyncio.gather(*[worker.profile_num_available_blocks.remote() for worker in self.workers])
+        
+        # Use the minimum across all workers for safety
+        min_gpu_blocks = min(profile['num_gpu_blocks'] for profile in block_profiles)
+        min_cpu_blocks = min(profile['num_cpu_blocks'] for profile in block_profiles)
+        
+        log_info(f"[{self.stage.value}Engine] Dynamic KV cache sizing:")
+        log_info(f"  ✓ num_gpu_blocks: {min_gpu_blocks} (was {self.max_num_gpu_blocks})")
+        log_info(f"  ✓ num_cpu_blocks: {min_cpu_blocks} (was {self.max_num_cpu_blocks})")
+        
+        # Update block manager with profiled values
+        self.block_manager.max_num_gpu_blocks = min_gpu_blocks
+        self.block_manager.max_num_cpu_blocks = min_cpu_blocks
+        self.block_manager._reset_free_blocks()  # Reinitialize free block lists
+        log_info(f"[{self.stage.value}Engine] ✓ Block manager updated with dynamic sizing")
+        
+        # Update config for consistency
+        self.max_num_gpu_blocks = min_gpu_blocks
+        self.max_num_cpu_blocks = min_cpu_blocks
+        
+        # Now initialize KV cache with profiled values (use min for consistency)
+        for worker_id, worker in enumerate(self.workers):
+            global_rank = worker_id if self.stage == EngineStage.PREFILL else worker_id + self.num_workers
             
-            # Profile and initialize KV cache
-            profile_result = await worker.profile_num_available_blocks.remote()
-            num_gpu_blocks = profile_result['num_gpu_blocks']
-            num_cpu_blocks = profile_result['num_cpu_blocks']
-            await worker.init_kvcache.remote(num_gpu_blocks, num_cpu_blocks)
+            # Use min values to ensure consistency across workers
+            await worker.init_kvcache.remote(min_gpu_blocks, min_cpu_blocks)
             
             # Register with KV transfer manager
             if self.kv_transfer_manager:
@@ -244,14 +272,16 @@ class BaseStageEngine:
 class PrefillEngine(BaseStageEngine):
     """Prefill stage engine"""
     
-    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, **kwargs):
+    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, max_batch_size: int = 16, **kwargs):
         super().__init__(stage=EngineStage.PREFILL, **kwargs)
         self.prefill_decode_bridge_queue = prefill_decode_bridge_queue
+        self.max_batch_size = max_batch_size
     
     async def step(self):
         """Execute one prefill step"""
         # Schedule a batch
-        batched_requests = self.scheduler.schedule(max_batch_size=16)
+        max_batch_size = getattr(self, 'max_batch_size', 16)
+        batched_requests = self.scheduler.schedule(max_batch_size=max_batch_size)
         
         if not batched_requests:
             await asyncio.sleep(0.01)
@@ -325,9 +355,10 @@ class PrefillEngine(BaseStageEngine):
 class DecodeEngine(BaseStageEngine):
     """Decode stage engine"""
     
-    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, **kwargs):
+    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, max_batch_size: int = 32, **kwargs):
         super().__init__(stage=EngineStage.DECODING, **kwargs)
         self.prefill_decode_bridge_queue = prefill_decode_bridge_queue
+        self.max_batch_size = max_batch_size
         self.output_callback = None
     
     def set_output_callback(self, callback):
@@ -534,8 +565,9 @@ class DecodeEngine(BaseStageEngine):
                     request.finish_reason = output.finish_reason
                     request.decoding_end_time = time.time()
                     
-                    # Free blocks
-                    self.block_manager.free_blocks(request.request_id)
+                    # Free blocks (only if allocated)
+                    if request.request_id in self.block_manager.block_table:
+                        self.block_manager.free_blocks(request.request_id)
                     
                     # Finish request in scheduler
                     self.scheduler.finish_request(request.request_id)

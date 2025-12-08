@@ -30,10 +30,30 @@ Request → Prefill Engine → KV Transfer → Decode Engine → Output
 ## Requirements
 
 - Python 3.8+
-- Ray
-- vLLM 0.10.0+
-- PyTorch
-- transformers
+- Ray 2.49.1
+- vLLM 0.10.1+
+- PyTorch 2.8.0+ (with CUDA support)
+- transformers 4.56.1+
+- Flash Attention 2.8.1+
+
+## Installation
+
+1. Install PyTorch with CUDA support:
+```bash
+pip install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+2. Install vLLM (if using from source):
+```bash
+pip install -e /path/to/vllm-0.10.1
+```
+
+3. Install other dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Note: Some packages like `flash_attn` may require compilation. See individual package documentation for installation details.
 
 ## Usage
 

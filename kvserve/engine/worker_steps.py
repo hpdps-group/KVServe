@@ -39,6 +39,7 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
                 sampling_params = SamplingParams(
                     temperature=request.temperature,
                     top_p=request.top_p,
+                    top_k=request.top_k if request.top_k > 0 else -1,
                     max_tokens=request.max_tokens or 50,
                 )
                 
@@ -164,6 +165,7 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                 sampling_params = SamplingParams(
                     temperature=request.temperature,
                     top_p=request.top_p,
+                    top_k=request.top_k if request.top_k > 0 else -1,
                     max_tokens=request.max_tokens or 50,
                 )
                 

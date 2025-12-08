@@ -30,6 +30,7 @@ class Request:
     max_tokens: int
     temperature: float = 1.0
     top_p: float = 1.0
+    top_k: int = -1  # -1 means disabled
     
     # Sequence management
     prompt_token_ids: Optional[List[int]] = None

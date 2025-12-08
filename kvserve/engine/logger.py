@@ -54,3 +54,4 @@ def log_error(message: str):
     """Log error message (always printed)"""
     print(f"[ERROR] {message}")
 
+

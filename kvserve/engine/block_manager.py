@@ -61,6 +61,23 @@ class BlockManager:
         self.swap_count = 0
         self.total_swap_time = 0.0
     
+    def _reset_free_blocks(self):
+        """
+        Reset free block lists after dynamic resizing
+        Called after profiling GPU memory to update block counts
+        """
+        # Clear and reinitialize free block lists with new sizes
+        self.free_gpu_blocks_list = list(range(self.max_num_gpu_blocks))
+        self.free_cpu_blocks_list = list(range(self.max_num_cpu_blocks))
+        
+        # Clear swapping lists (should be empty at init anyway)
+        self.swapping_gpu_blocks_list = []
+        self.swapping_cpu_blocks_list = []
+        
+        # Note: block_table and request_location are NOT cleared
+        # as they may contain allocated blocks from before resizing
+        # This method should only be called during initialization
+    
     def get_num_avail_gpu_blocks(self) -> int:
         """Get the number of available GPU blocks"""
         return len(self.free_gpu_blocks_list) + len(self.swapping_gpu_blocks_list)

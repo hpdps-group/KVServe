@@ -105,3 +105,4 @@ class LosslessCompression(ABC):
         """
         pass
 
+

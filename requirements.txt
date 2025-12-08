@@ -1,0 +1,35 @@
+# Core LLM Inference Dependencies
+# vLLM - Note: This project uses vLLM 0.10.1 from local path /root/lzd/vllm-0.10.1
+# Install vLLM separately: pip install -e /path/to/vllm-0.10.1
+# Or use: vllm>=0.10.1
+vllm>=0.10.1
+
+# PyTorch (CUDA 12.8)
+# Note: Install from PyTorch official site for CUDA support
+# pip install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+torch>=2.8.0
+torchvision>=0.23.0
+torchaudio>=2.8.0
+
+# Hugging Face Libraries
+transformers==4.56.1
+accelerate==1.12.0
+tokenizers==0.22.0
+sentencepiece==0.2.1
+safetensors==0.6.2
+huggingface-hub==0.34.4
+
+# Distributed Computing
+ray==2.49.1
+
+# Flash Attention
+flash_attn==2.8.1
+
+# Data Processing
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.16.2
+
+# Utilities
+protobuf==6.32.1
+
