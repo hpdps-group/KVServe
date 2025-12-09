@@ -178,6 +178,11 @@ class PDBackend:
         log_info("[PDBackend] Engines stopped")
     
     async def add_request(self, request: Request):
+        # Log request details and available resources
+        num_tokens = len(request.prompt_token_ids)
+        blocks_needed = (num_tokens + self.prefill_engine.block_manager.block_size - 1) // self.prefill_engine.block_manager.block_size
+        blocks_avail = self.prefill_engine.block_manager.get_num_avail_gpu_blocks()
+        log_info(f"[Backend] add_request {request.request_id}: {num_tokens} tokens, needs ~{blocks_needed} blocks, available={blocks_avail}")
         """Add a request to the prefill stage"""
         if not self.prefill_engine:
             raise RuntimeError("Backend not initialized")
@@ -191,6 +196,10 @@ class PDBackend:
         while self.output_queue:
             outputs.append(self.output_queue.popleft())
         return outputs
+    
+    def get_request_outputs(self, request_id: str) -> List[StepOutput]:
+        """Get all accumulated outputs for a specific request"""
+        return self._request_outputs.get(request_id, [])
     
     def get_stats(self) -> Dict:
         """Get backend statistics"""

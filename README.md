@@ -57,7 +57,59 @@ Note: Some packages like `flash_attn` may require compilation. See individual pa
 
 ## Usage
 
-### Basic Example
+### 1. Standard Inference Test
+
+Run basic PD separation inference test:
+
+```bash
+# Update model_path in test/test_pd_separation.py if needed
+python test/test_pd_separation.py
+```
+
+This demonstrates the core PD separation functionality with direct API usage.
+
+### 2. LM-Evaluation-Harness Style Tasks
+
+KVServe supports `lm-evaluation-harness` compatible evaluation tasks:
+
+```bash
+# Run evaluation with default settings
+bash test/test_kvserve_eval.sh
+
+# Or customize parameters
+python -m kvserve.eval.cli \
+    --model kvserve \
+    --model_args "pretrained=/path/to/model,num_prefill_workers=1,num_decoding_workers=1,max_model_len=8000" \
+    --tasks gsm8k_cot \
+    --batch_size 16 \
+    --limit 200
+```
+
+**Supported model_args:**
+- `pretrained`: Path to the model
+- `num_prefill_workers`: Number of prefill workers (default: 1)
+- `num_decoding_workers`: Number of decode workers (default: 1)
+- `max_model_len`: Maximum sequence length (default: 32768)
+- `max_new_tokens`: Maximum tokens to generate (optional)
+- `batch_size`: evaluation batch size (default: 1)
+- `apply_chat_template`: Apply chat template for chat models (default: False)
+
+### Logging Control
+
+Control output verbosity with environment variable:
+
+```bash
+# Show only warnings and errors (clean output with progress bar)
+export KVSERVE_LOG_LEVEL=WARNING  # Default
+
+# Show detailed debug information
+export KVSERVE_LOG_LEVEL=DEBUG
+
+# Then run evaluation
+bash test/test_kvserve_eval.sh
+```
+
+### API Usage Example
 
 ```python
 import asyncio
@@ -107,13 +159,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-```
-
-### Running Tests
-
-```bash
-# Update model_path in test/test_pd_separation.py
-python test/test_pd_separation.py
 ```
 
 ## Notes

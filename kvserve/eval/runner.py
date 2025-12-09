@@ -23,6 +23,7 @@ def run_evaluation(
     limit: Optional[Union[int, float]] = None,
     verbosity: str = "INFO",
     output_path: Optional[str] = None,
+    apply_chat_template: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -53,7 +54,12 @@ def run_evaluation(
         )
     
     # Initialize evaluator
-    evaluator = KVServeEvaluator(backend=backend, model_path=model_path)
+    evaluator = KVServeEvaluator(
+        backend=backend,
+        tokenizer=backend.tokenizer if hasattr(backend, 'tokenizer') else None,
+        apply_chat_template=apply_chat_template,
+        batch_size=batch_size or 1
+    )
     
     # Convert tasks to list if string
     if isinstance(tasks, str):

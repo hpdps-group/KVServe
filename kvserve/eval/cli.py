@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 import json
+import logging
 from typing import List, Optional, Union, Dict, Any
 
 # Add project root to path if needed
@@ -19,6 +20,14 @@ if project_root not in sys.path:
 import ray
 from kvserve.engine.backend import PDBackend
 from kvserve.eval.runner import run_evaluation
+
+# Configure logging based on environment variable
+log_level = os.environ.get('KVSERVE_LOG_LEVEL', 'WARNING').upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.WARNING),
+    format='%(asctime)s %(levelname)-8s [%(name)s:%(lineno)d] %(message)s',
+    datefmt='%Y-%m-%d:%H:%M:%S'
+)
 
 
 def parse_model_args(model_args_str: str) -> Dict[str, Any]:
@@ -191,6 +200,12 @@ Examples:
     default_temperature = model_args.pop("temperature", None)
     default_top_p = model_args.pop("top_p", None)
     default_top_k = model_args.pop("top_k", None)
+    apply_chat_template = model_args.pop("apply_chat_template", False)
+    max_new_tokens = model_args.pop("max_new_tokens", None)
+    
+    # Convert apply_chat_template to boolean if it's a string
+    if isinstance(apply_chat_template, str):
+        apply_chat_template = apply_chat_template.lower() in ("true", "1", "yes", "on")
     
     # Calculate number of GPUs needed
     if args.num_gpus is None:
@@ -232,6 +247,7 @@ Examples:
         backend.default_temperature = default_temperature
         backend.default_top_p = default_top_p
         backend.default_top_k = default_top_k
+        backend.max_new_tokens = max_new_tokens
         
         try:
             # Initialize and start backend
@@ -239,16 +255,34 @@ Examples:
             await backend.start()
             await asyncio.sleep(2)  # Wait for stability
             
+            # Parse tasks (support comma-separated string or list)
+            tasks = args.tasks
+            if isinstance(tasks, str):
+                # Split comma-separated tasks in a single string
+                tasks = [t.strip() for t in tasks.split(',') if t.strip()]
+            elif isinstance(tasks, list):
+                # Split comma-separated tasks in each list element
+                parsed_tasks = []
+                for task in tasks:
+                    if ',' in task:
+                        parsed_tasks.extend([t.strip() for t in task.split(',') if t.strip()])
+                    else:
+                        parsed_tasks.append(task.strip())
+                tasks = parsed_tasks
+            else:
+                tasks = [tasks]
+            
             # Run evaluation
             results = run_evaluation(
                 backend=backend,
-                tasks=args.tasks,
+                tasks=tasks,
                 model_path=model_path,
                 num_fewshot=args.num_fewshot,
                 batch_size=args.batch_size,
                 limit=args.limit,
                 verbosity=args.verbosity,
                 output_path=args.output_path,
+                apply_chat_template=apply_chat_template,
             )
             
             # Print results summary
