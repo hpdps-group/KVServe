@@ -27,19 +27,12 @@ class Request:
     """Request representation for PD separation engine"""
     request_id: str
     prompt: str
-<<<<<<< HEAD
-    max_tokens: int
-    temperature: float = 1.0
-    top_p: float = 1.0
-    top_k: int = -1  # -1 means disabled
-=======
     max_tokens: Optional[int] = None  # None means no limit
     temperature: float = 1.0
     top_p: float = 1.0
     top_k: int = -1  # -1 means disabled
     do_sample: bool = True
     stop: Optional[List[str]] = None  # Stop sequences
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     # Sequence management
     prompt_token_ids: Optional[List[int]] = None
@@ -84,20 +77,13 @@ class Request:
     
     def check_finished(self, eos_token_id: int) -> bool:
         """Check if request is finished"""
-<<<<<<< HEAD
-        if self.get_output_len() >= self.max_tokens:
-=======
         # Check max_tokens limit (if set)
         if self.max_tokens is not None and self.get_output_len() >= self.max_tokens:
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             self.is_finished = True
             self.finish_reason = "length"
             return True
         
-<<<<<<< HEAD
-=======
         # Check for EOS token
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         if self.output_token_ids and self.output_token_ids[-1] == eos_token_id:
             self.is_finished = True
             self.finish_reason = "stop"

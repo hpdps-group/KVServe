@@ -36,7 +36,7 @@ async def main():
         )
     
     # Model path
-    model_path = "/root/ssd/Llama3.1-8B-Instruct"  # Update this to your model path
+    model_path = "/root/workspace/models/Meta-Llama-3.1-8B-Instruct"  # Update this to your model path
     if not os.path.exists(model_path):
         print(f"Error: Model not found at {model_path}")
         print("Please update model_path in the script")
@@ -50,7 +50,7 @@ async def main():
         num_decoding_workers=1,
         block_size=16,
         max_num_gpu_blocks=3000,
-        dtype="float16",
+        dtype="bfloat16",
         gpu_memory_utilization=0.85,
         kv_transfer_method="nccl",
         nccl_init_method="tcp://localhost:29500",
@@ -101,6 +101,7 @@ async def main():
         generated_text = tokenizer.decode(final_output.output_token_ids, skip_special_tokens=True)
         total_tokens = len(final_output.output_token_ids)
         print(f"✓ Inference successful. Total tokens: {total_tokens}")
+        print(f"Generated text: {generated_text}")
     
     # Cleanup
     await backend.stop()

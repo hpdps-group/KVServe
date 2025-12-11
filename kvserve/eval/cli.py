@@ -9,10 +9,7 @@ import asyncio
 import os
 import sys
 import json
-<<<<<<< HEAD
-=======
 import logging
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 from typing import List, Optional, Union, Dict, Any
 
 # Add project root to path if needed
@@ -24,8 +21,6 @@ import ray
 from kvserve.engine.backend import PDBackend
 from kvserve.eval.runner import run_evaluation
 
-<<<<<<< HEAD
-=======
 # Configure logging based on environment variable
 log_level = os.environ.get('KVSERVE_LOG_LEVEL', 'WARNING').upper()
 logging.basicConfig(
@@ -34,7 +29,6 @@ logging.basicConfig(
     datefmt='%Y-%m-%d:%H:%M:%S'
 )
 
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 
 def parse_model_args(model_args_str: str) -> Dict[str, Any]:
     """
@@ -206,15 +200,12 @@ Examples:
     default_temperature = model_args.pop("temperature", None)
     default_top_p = model_args.pop("top_p", None)
     default_top_k = model_args.pop("top_k", None)
-<<<<<<< HEAD
-=======
     apply_chat_template = model_args.pop("apply_chat_template", False)
     max_new_tokens = model_args.pop("max_new_tokens", None)
     
     # Convert apply_chat_template to boolean if it's a string
     if isinstance(apply_chat_template, str):
         apply_chat_template = apply_chat_template.lower() in ("true", "1", "yes", "on")
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     # Calculate number of GPUs needed
     if args.num_gpus is None:
@@ -256,10 +247,7 @@ Examples:
         backend.default_temperature = default_temperature
         backend.default_top_p = default_top_p
         backend.default_top_k = default_top_k
-<<<<<<< HEAD
-=======
         backend.max_new_tokens = max_new_tokens
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         
         try:
             # Initialize and start backend
@@ -267,12 +255,6 @@ Examples:
             await backend.start()
             await asyncio.sleep(2)  # Wait for stability
             
-<<<<<<< HEAD
-            # Run evaluation
-            results = run_evaluation(
-                backend=backend,
-                tasks=args.tasks,
-=======
             # Parse tasks (support comma-separated string or list)
             tasks = args.tasks
             if isinstance(tasks, str):
@@ -294,17 +276,13 @@ Examples:
             results = run_evaluation(
                 backend=backend,
                 tasks=tasks,
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 model_path=model_path,
                 num_fewshot=args.num_fewshot,
                 batch_size=args.batch_size,
                 limit=args.limit,
                 verbosity=args.verbosity,
                 output_path=args.output_path,
-<<<<<<< HEAD
-=======
                 apply_chat_template=apply_chat_template,
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             )
             
             # Print results summary

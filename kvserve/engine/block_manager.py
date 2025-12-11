@@ -5,18 +5,12 @@ Manages KV cache at block level
 
 from typing import List, Dict, Optional, Callable
 from enum import Enum
-<<<<<<< HEAD
-
-from kvserve.engine.utils import Request, BatchedRequests
-
-=======
 import logging
 
 from kvserve.engine.utils import Request, BatchedRequests
 
 logger = logging.getLogger(__name__)
 
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 
 class BlockLocation(Enum):
     """The location of a block"""
@@ -261,8 +255,6 @@ class BlockManager:
         # Allocate new blocks
         new_blocks = self._get_free_blocks(num_append_blocks, BlockLocation.GPU)
         self.block_table[request.request_id].extend(new_blocks)
-<<<<<<< HEAD
-=======
     
     def get_block_usage(self) -> dict:
         """Get block usage statistics (from ElasticMM)"""
@@ -287,6 +279,5 @@ class BlockManager:
         usage = self.get_block_usage()
         logger.debug(f"[{self.stage}] Block usage: GPU={usage['gpu']}, CPU={usage['cpu']}, "
                     f"Swapping={usage['swap']}, Requests={usage['#req']}")
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 
 

@@ -57,9 +57,6 @@ Note: Some packages like `flash_attn` may require compilation. See individual pa
 
 ## Usage
 
-<<<<<<< HEAD
-### Basic Example
-=======
 ### 1. Standard Inference Test
 
 Run basic PD separation inference test:
@@ -113,7 +110,6 @@ bash test/test_kvserve_eval.sh
 ```
 
 ### API Usage Example
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 
 ```python
 import asyncio
@@ -169,16 +165,6 @@ if __name__ == "__main__":
 ### Running Tests
 
 ```bash
-# Update model_path in test/test_pd_separation.py
-python test/test_pd_separation.py
-```
-
-=======
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
-## Notes
-
-- This is a simplified version extracted from ElasticMM's V0 backend
-- Only supports Prefill-Decode separation (no Encoding stage)
 - Requires at least 2 GPUs (1 for Prefill, 1 for Decode)
 - KV transfer uses NCCL P2P by default
 

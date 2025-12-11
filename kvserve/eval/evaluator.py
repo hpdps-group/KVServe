@@ -41,11 +41,8 @@ class KVServeEvaluator(_LM_BASE):
         backend: PDBackend,
         tokenizer: Optional[Any] = None,
         model_path: Optional[str] = None,
-<<<<<<< HEAD
-=======
         apply_chat_template: bool = False,
         batch_size: int = 1,
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     ):
         """
         Initialize KVServe evaluator
@@ -54,11 +51,8 @@ class KVServeEvaluator(_LM_BASE):
             backend: Initialized PDBackend instance
             tokenizer: Tokenizer instance (optional, will load from model_path if not provided)
             model_path: Path to model (for loading tokenizer if tokenizer not provided)
-<<<<<<< HEAD
-=======
             apply_chat_template: Whether to apply chat template for tokenization (default: False)
             batch_size: Number of requests to process concurrently (default: 1)
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         """
         # Initialize base class if it's LM
         if _HAS_LM_BASE:
@@ -66,11 +60,8 @@ class KVServeEvaluator(_LM_BASE):
         
         self.backend = backend
         self.model_path = model_path or backend.model_path
-<<<<<<< HEAD
-=======
         self.apply_chat_template = apply_chat_template
         self.batch_size = batch_size
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         
         # Load tokenizer if not provided
         if tokenizer is None:
@@ -122,15 +113,11 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-<<<<<<< HEAD
-            return asyncio.run(self._loglikelihood_async(requests))
-=======
             try:
                 return asyncio.run(self._loglikelihood_async(requests))
             except KeyboardInterrupt:
                 eval_logger.info("Evaluation interrupted by user (Ctrl+C)")
                 raise
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     async def _loglikelihood_async(self, requests) -> List[Tuple[float, bool]]:
         """Async implementation of loglikelihood"""
@@ -146,9 +133,6 @@ class KVServeEvaluator(_LM_BASE):
         # Use the first worker
         worker = self.backend.prefill_engine.workers[0]
         
-<<<<<<< HEAD
-        for instance in requests:
-=======
         from tqdm import tqdm
         for instance in tqdm(
             requests, 
@@ -159,7 +143,6 @@ class KVServeEvaluator(_LM_BASE):
             leave=True,
             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
         ):
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             # Extract context and continuation from instance
             # Instance has property 'args' that returns tuple (context, continuation)
             if hasattr(instance, 'args'):
@@ -179,10 +162,6 @@ class KVServeEvaluator(_LM_BASE):
                 # Fallback: assume instance is a tuple
                 context, continuation = instance
             
-<<<<<<< HEAD
-            # Tokenize
-            context_tokens = self.tokenizer.encode(context, add_special_tokens=False)
-=======
             # Tokenize with optional chat template
             if self.apply_chat_template and hasattr(self.tokenizer, 'apply_chat_template'):
                 # Apply chat template if enabled
@@ -200,7 +179,6 @@ class KVServeEvaluator(_LM_BASE):
             else:
                 context_tokens = self.tokenizer.encode(context, add_special_tokens=False)
             
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             if not isinstance(context_tokens, list):
                 context_tokens = context_tokens.tolist()
             
@@ -274,15 +252,11 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-<<<<<<< HEAD
-            return asyncio.run(self._loglikelihood_rolling_async(requests))
-=======
             try:
                 return asyncio.run(self._loglikelihood_rolling_async(requests))
             except KeyboardInterrupt:
                 eval_logger.info("Evaluation interrupted by user (Ctrl+C)")
                 raise
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     async def _loglikelihood_rolling_async(self, requests) -> List[float]:
         """Async implementation of loglikelihood_rolling"""
@@ -336,17 +310,6 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-<<<<<<< HEAD
-            return asyncio.run(self._generate_until_async(requests))
-    
-    async def _generate_until_async(self, requests) -> List[str]:
-        """Async implementation of generate_until"""
-        await self._ensure_backend_started()
-        
-        results = []
-        
-        for instance in requests:
-=======
             try:
                 return asyncio.run(self._generate_until_async(requests))
             except KeyboardInterrupt:
@@ -356,7 +319,6 @@ class KVServeEvaluator(_LM_BASE):
     async def _process_single_generate_request(self, instance) -> str:
         """Process a single generate_until request"""
         try:
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             # Extract context and gen_kwargs from instance
             if hasattr(instance, 'args'):
                 args = instance.args
@@ -377,13 +339,6 @@ class KVServeEvaluator(_LM_BASE):
                 gen_kwargs = {}
             
             # Extract generation parameters
-<<<<<<< HEAD
-            max_tokens = gen_kwargs.get('max_gen_tokens', 256)
-            until = gen_kwargs.get('until', [])
-            # Use backend defaults if available, otherwise use gen_kwargs or defaults
-            temperature = gen_kwargs.get('temperature', 
-                getattr(self.backend, 'default_temperature', None) or 0.0)
-=======
             max_tokens = gen_kwargs.get('max_gen_toks', gen_kwargs.get('max_gen_tokens', None))
             
             # Check for global max_tokens override from backend
@@ -400,16 +355,11 @@ class KVServeEvaluator(_LM_BASE):
                 temperature = gen_kwargs.get('temperature', 
                     getattr(self.backend, 'default_temperature', None) or 1.0)
             
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             top_p = gen_kwargs.get('top_p', 
                 getattr(self.backend, 'default_top_p', None) or 1.0)
             top_k = gen_kwargs.get('top_k', 
                 getattr(self.backend, 'default_top_k', None) or -1)
             
-<<<<<<< HEAD
-            # Tokenize context
-            context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
-=======
             # Tokenize context with optional chat template
             if self.apply_chat_template and hasattr(self.tokenizer, 'apply_chat_template'):
                 try:
@@ -423,7 +373,6 @@ class KVServeEvaluator(_LM_BASE):
                     context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
             else:
                 context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             
             # Create request
             request_id = f"generate_{self._request_counter}"
@@ -437,43 +386,6 @@ class KVServeEvaluator(_LM_BASE):
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k if top_k > 0 else -1,
-<<<<<<< HEAD
-            )
-            
-            await self.backend.add_request(request)
-            
-            # Collect output
-            output = None
-            while output is None or not output.finished:
-                outputs = await self.backend.get_outputs()
-                for o in outputs:
-                    if o.request_id == request_id:
-                        output = o
-                        if o.finished:
-                            break
-                if output is None or not output.finished:
-                    await asyncio.sleep(0.1)
-            
-            # Decode generated tokens
-            if output and output.output_token_ids:
-                # Remove prompt tokens, keep only generated tokens
-                generated_tokens = output.output_token_ids[len(context_tokens):]
-                generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                
-                # Apply stopping sequences
-                if until:
-                    for stop_seq in until:
-                        if stop_seq in generated_text:
-                            idx = generated_text.index(stop_seq)
-                            generated_text = generated_text[:idx]
-                            break
-                
-                results.append(generated_text)
-            else:
-                results.append("")
-        
-        return results
-=======
                 do_sample=do_sample,
                 stop=until if until else None,
             )
@@ -595,7 +507,6 @@ class KVServeEvaluator(_LM_BASE):
             raise
         
         return all_results
->>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     def __del__(self):
         """Cleanup"""
