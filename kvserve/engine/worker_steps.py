@@ -35,6 +35,7 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
                     output_token_ids=None,
                 )
                 
+<<<<<<< HEAD
                 # Create sampling params
                 sampling_params = SamplingParams(
                     temperature=request.temperature,
@@ -42,6 +43,27 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
                     top_k=request.top_k if request.top_k > 0 else -1,
                     max_tokens=request.max_tokens or 50,
                 )
+=======
+                # Create sampling params (following vLLM defaults)
+                # Handle do_sample: if False, use temperature=0.0 for greedy sampling
+                sampling_temp = 0.0 if not request.do_sample else request.temperature
+                
+                # Build sampling kwargs with vLLM-compatible parameters
+                # Note: top_k in vLLM uses 0 or -1 to disable, not distinction needed
+                sampling_kwargs = {
+                    'temperature': sampling_temp,
+                    'top_p': request.top_p,
+                    'top_k': request.top_k if request.top_k > 0 else -1,
+                    'max_tokens': request.max_tokens if request.max_tokens is not None else 16,  # vLLM default
+                }
+                
+                # Add stop sequences if provided
+                if request.stop:
+                    sampling_kwargs['stop'] = request.stop
+                
+                log_debug(f"[Worker] Prefill SamplingParams for {request.request_id}: temp={sampling_temp}, max_tokens={sampling_kwargs['max_tokens']}, stop={request.stop}")
+                sampling_params = SamplingParams(**sampling_kwargs)
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 
                 # Get block table for this request (if available)
                 # kv_block_tables is a dict: {request_id: [block_ids...]}
@@ -92,10 +114,29 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
             outputs = []
             for i, request in enumerate(batched_requests.requests):
                 token_id = generated_tokens[i] if i < len(generated_tokens) else 1
+<<<<<<< HEAD
                 output = StepOutput(
                     request_id=request.request_id,
                     output_token_ids=[token_id],
                     finished=(token_id == 2),  # 2 is EOS
+=======
+                # Check EOS for prefill output
+                eos_token_ids = []
+                if hasattr(worker.model_runner.model_config, 'hf_config'):
+                    hf_config = worker.model_runner.model_config.hf_config
+                    if hasattr(hf_config, 'eos_token_id'):
+                        if isinstance(hf_config.eos_token_id, list):
+                            eos_token_ids = hf_config.eos_token_id
+                        else:
+                            eos_token_ids = [hf_config.eos_token_id]
+                
+                finished = eos_token_ids and token_id in eos_token_ids
+                
+                output = StepOutput(
+                    request_id=request.request_id,
+                    output_token_ids=[token_id],
+                    finished=finished,
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 )
                 outputs.append(output)
             
@@ -161,6 +202,7 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                 if total_tokens > 0:
                     seq_data.update_num_computed_tokens(total_tokens - 1)
                 
+<<<<<<< HEAD
                 # Create sampling params
                 sampling_params = SamplingParams(
                     temperature=request.temperature,
@@ -168,6 +210,27 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                     top_k=request.top_k if request.top_k > 0 else -1,
                     max_tokens=request.max_tokens or 50,
                 )
+=======
+                # Create sampling params (following vLLM defaults)
+                # Handle do_sample: if False, use temperature=0.0 for greedy sampling
+                sampling_temp = 0.0 if not request.do_sample else request.temperature
+                
+                # Build sampling kwargs with vLLM-compatible parameters
+                # Note: top_k in vLLM uses 0 or -1 to disable, not distinction needed
+                sampling_kwargs = {
+                    'temperature': sampling_temp,
+                    'top_p': request.top_p,
+                    'top_k': request.top_k if request.top_k > 0 else -1,
+                    'max_tokens': request.max_tokens if request.max_tokens is not None else 16,  # vLLM default
+                }
+                
+                # Add stop sequences if provided
+                if request.stop:
+                    sampling_kwargs['stop'] = request.stop
+                
+                log_debug(f"[Worker] Decode SamplingParams for {request.request_id}: temp={sampling_temp}, max_tokens={sampling_kwargs['max_tokens']}, stop={request.stop}")
+                sampling_params = SamplingParams(**sampling_kwargs)
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 
                 # Get block table for this request
                 block_table = kv_block_tables.get(request.request_id, []) if kv_block_tables else []
@@ -252,8 +315,28 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                 token_id = generated_tokens[i] if i < len(generated_tokens) else 1
                 output_tokens = (request.output_token_ids or []) + [token_id]
                 
+<<<<<<< HEAD
                 # Finish after max_tokens or if EOS
                 finished = (len(output_tokens) >= request.max_tokens) or (token_id == 2)  # 2 is EOS
+=======
+                # Check if finished based on max_tokens or EOS
+                # Get EOS token IDs from tokenizer (handles different models)
+                eos_token_ids = []
+                if hasattr(worker.model_runner.model_config, 'hf_config'):
+                    hf_config = worker.model_runner.model_config.hf_config
+                    if hasattr(hf_config, 'eos_token_id'):
+                        if isinstance(hf_config.eos_token_id, list):
+                            eos_token_ids = hf_config.eos_token_id
+                        else:
+                            eos_token_ids = [hf_config.eos_token_id]
+                
+                if request.max_tokens is not None and len(output_tokens) >= request.max_tokens:
+                    finished = True
+                elif eos_token_ids and token_id in eos_token_ids:
+                    finished = True  # Finish on any EOS token
+                else:
+                    finished = False
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 
                 log_debug(f"[Worker] Decode output for {req_id}: new_token={token_id}, total_tokens={len(output_tokens)}, finished={finished}")
                 

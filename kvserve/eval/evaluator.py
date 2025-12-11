@@ -41,6 +41,11 @@ class KVServeEvaluator(_LM_BASE):
         backend: PDBackend,
         tokenizer: Optional[Any] = None,
         model_path: Optional[str] = None,
+<<<<<<< HEAD
+=======
+        apply_chat_template: bool = False,
+        batch_size: int = 1,
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     ):
         """
         Initialize KVServe evaluator
@@ -49,6 +54,11 @@ class KVServeEvaluator(_LM_BASE):
             backend: Initialized PDBackend instance
             tokenizer: Tokenizer instance (optional, will load from model_path if not provided)
             model_path: Path to model (for loading tokenizer if tokenizer not provided)
+<<<<<<< HEAD
+=======
+            apply_chat_template: Whether to apply chat template for tokenization (default: False)
+            batch_size: Number of requests to process concurrently (default: 1)
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         """
         # Initialize base class if it's LM
         if _HAS_LM_BASE:
@@ -56,6 +66,11 @@ class KVServeEvaluator(_LM_BASE):
         
         self.backend = backend
         self.model_path = model_path or backend.model_path
+<<<<<<< HEAD
+=======
+        self.apply_chat_template = apply_chat_template
+        self.batch_size = batch_size
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         
         # Load tokenizer if not provided
         if tokenizer is None:
@@ -107,7 +122,15 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
+<<<<<<< HEAD
             return asyncio.run(self._loglikelihood_async(requests))
+=======
+            try:
+                return asyncio.run(self._loglikelihood_async(requests))
+            except KeyboardInterrupt:
+                eval_logger.info("Evaluation interrupted by user (Ctrl+C)")
+                raise
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     async def _loglikelihood_async(self, requests) -> List[Tuple[float, bool]]:
         """Async implementation of loglikelihood"""
@@ -123,7 +146,20 @@ class KVServeEvaluator(_LM_BASE):
         # Use the first worker
         worker = self.backend.prefill_engine.workers[0]
         
+<<<<<<< HEAD
         for instance in requests:
+=======
+        from tqdm import tqdm
+        for instance in tqdm(
+            requests, 
+            desc="Computing loglikelihoods", 
+            unit="req",
+            ncols=100,
+            position=0,
+            leave=True,
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+        ):
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             # Extract context and continuation from instance
             # Instance has property 'args' that returns tuple (context, continuation)
             if hasattr(instance, 'args'):
@@ -143,8 +179,28 @@ class KVServeEvaluator(_LM_BASE):
                 # Fallback: assume instance is a tuple
                 context, continuation = instance
             
+<<<<<<< HEAD
             # Tokenize
             context_tokens = self.tokenizer.encode(context, add_special_tokens=False)
+=======
+            # Tokenize with optional chat template
+            if self.apply_chat_template and hasattr(self.tokenizer, 'apply_chat_template'):
+                # Apply chat template if enabled
+                try:
+                    # Try to apply chat template to context
+                    templated_context = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": context}],
+                        tokenize=False,
+                        add_generation_prompt=False
+                    )
+                    context_tokens = self.tokenizer.encode(templated_context, add_special_tokens=False)
+                except Exception:
+                    # Fallback to regular tokenization if template fails
+                    context_tokens = self.tokenizer.encode(context, add_special_tokens=False)
+            else:
+                context_tokens = self.tokenizer.encode(context, add_special_tokens=False)
+            
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             if not isinstance(context_tokens, list):
                 context_tokens = context_tokens.tolist()
             
@@ -218,7 +274,15 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
+<<<<<<< HEAD
             return asyncio.run(self._loglikelihood_rolling_async(requests))
+=======
+            try:
+                return asyncio.run(self._loglikelihood_rolling_async(requests))
+            except KeyboardInterrupt:
+                eval_logger.info("Evaluation interrupted by user (Ctrl+C)")
+                raise
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     async def _loglikelihood_rolling_async(self, requests) -> List[float]:
         """Async implementation of loglikelihood_rolling"""
@@ -272,6 +336,7 @@ class KVServeEvaluator(_LM_BASE):
                 return future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
+<<<<<<< HEAD
             return asyncio.run(self._generate_until_async(requests))
     
     async def _generate_until_async(self, requests) -> List[str]:
@@ -281,6 +346,17 @@ class KVServeEvaluator(_LM_BASE):
         results = []
         
         for instance in requests:
+=======
+            try:
+                return asyncio.run(self._generate_until_async(requests))
+            except KeyboardInterrupt:
+                eval_logger.info("Evaluation interrupted by user (Ctrl+C)")
+                raise
+    
+    async def _process_single_generate_request(self, instance) -> str:
+        """Process a single generate_until request"""
+        try:
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             # Extract context and gen_kwargs from instance
             if hasattr(instance, 'args'):
                 args = instance.args
@@ -301,18 +377,53 @@ class KVServeEvaluator(_LM_BASE):
                 gen_kwargs = {}
             
             # Extract generation parameters
+<<<<<<< HEAD
             max_tokens = gen_kwargs.get('max_gen_tokens', 256)
             until = gen_kwargs.get('until', [])
             # Use backend defaults if available, otherwise use gen_kwargs or defaults
             temperature = gen_kwargs.get('temperature', 
                 getattr(self.backend, 'default_temperature', None) or 0.0)
+=======
+            max_tokens = gen_kwargs.get('max_gen_toks', gen_kwargs.get('max_gen_tokens', None))
+            
+            # Check for global max_tokens override from backend
+            if max_tokens is None and hasattr(self.backend, 'max_new_tokens'):
+                max_tokens = self.backend.max_new_tokens
+            
+            until = gen_kwargs.get('until', [])
+            do_sample = gen_kwargs.get('do_sample', True)
+            
+            # Handle temperature based on do_sample
+            if not do_sample:
+                temperature = 0.0
+            else:
+                temperature = gen_kwargs.get('temperature', 
+                    getattr(self.backend, 'default_temperature', None) or 1.0)
+            
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             top_p = gen_kwargs.get('top_p', 
                 getattr(self.backend, 'default_top_p', None) or 1.0)
             top_k = gen_kwargs.get('top_k', 
                 getattr(self.backend, 'default_top_k', None) or -1)
             
+<<<<<<< HEAD
             # Tokenize context
             context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
+=======
+            # Tokenize context with optional chat template
+            if self.apply_chat_template and hasattr(self.tokenizer, 'apply_chat_template'):
+                try:
+                    templated_context = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": context}],
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                    context_tokens = self.tokenizer.encode(templated_context, return_tensors="pt")[0].tolist()
+                except Exception:
+                    context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
+            else:
+                context_tokens = self.tokenizer.encode(context, return_tensors="pt")[0].tolist()
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             
             # Create request
             request_id = f"generate_{self._request_counter}"
@@ -326,6 +437,7 @@ class KVServeEvaluator(_LM_BASE):
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k if top_k > 0 else -1,
+<<<<<<< HEAD
             )
             
             await self.backend.add_request(request)
@@ -361,6 +473,129 @@ class KVServeEvaluator(_LM_BASE):
                 results.append("")
         
         return results
+=======
+                do_sample=do_sample,
+                stop=until if until else None,
+            )
+            
+            # Submit request (using debug level to reduce verbosity)
+            eval_logger.debug(f"[Evaluator] Submitting {request_id} with {len(context_tokens)} context tokens, max_tokens={max_tokens}")
+            await self.backend.add_request(request)
+            eval_logger.debug(f"[Evaluator] Request {request_id} submitted successfully")
+            
+            # Wait for completion
+            final_output = None
+            max_wait_time = 60.0
+            wait_start = asyncio.get_event_loop().time()
+            last_log_time = 0
+            
+            while final_output is None or not final_output.finished:
+                # Check if task was cancelled (e.g., by Ctrl+C)
+                if asyncio.current_task().cancelled():
+                    eval_logger.info(f"Request {request_id} cancelled")
+                    raise asyncio.CancelledError()
+                
+                elapsed = asyncio.get_event_loop().time() - wait_start
+                if elapsed > max_wait_time:
+                    eval_logger.warning(f"Timeout waiting for output for request {request_id} after {elapsed:.1f}s")
+                    eval_logger.warning(f"Request {request_id}: final_output={final_output}, finished={final_output.finished if final_output else None}")
+                    break
+                
+                outputs = await self.backend.get_outputs()
+                for o in outputs:
+                    if o.request_id == request_id:
+                        final_output = o
+                        eval_logger.debug(f"[Evaluator] {request_id} got output: {len(o.output_token_ids)} tokens, finished={o.finished}")
+                        if o.finished:
+                            break
+                
+                # Log progress every 10 seconds (debug level to reduce verbosity)
+                if int(elapsed) % 10 == 0 and int(elapsed) > 0 and int(elapsed) != last_log_time:
+                    status = "waiting" if final_output is None else f"{len(final_output.output_token_ids)} tokens"
+                    eval_logger.debug(f"[Evaluator] {request_id}: {elapsed:.0f}s elapsed, status={status}")
+                    last_log_time = int(elapsed)
+                
+                # Check accumulated outputs
+                if final_output is None or not final_output.finished:
+                    request_outputs = self.backend.get_request_outputs(request_id)
+                    if request_outputs:
+                        final_output = request_outputs[-1]
+                        if final_output.finished:
+                            break
+                
+                if final_output is None or not final_output.finished:
+                    await asyncio.sleep(0.1)
+        
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            eval_logger.info(f"Request processing interrupted")
+            raise
+        
+        # Decode generated tokens
+        if final_output and final_output.output_token_ids:
+            generated_tokens = final_output.output_token_ids
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            
+            # Apply stopping sequences
+            if until:
+                for stop_seq in until:
+                    if stop_seq in generated_text:
+                        idx = generated_text.index(stop_seq)
+                        generated_text = generated_text[:idx]
+                        break
+            
+            return generated_text
+        else:
+            eval_logger.warning(f"Request {request_id}: No output or empty output_token_ids")
+            if final_output:
+                eval_logger.warning(f"Request {request_id}: final_output.finished={final_output.finished}, output_token_ids={final_output.output_token_ids}")
+            return ""
+    
+    async def _generate_until_async(self, requests) -> List[str]:
+        """Async implementation of generate_until with batch processing"""
+        await self._ensure_backend_started()
+        
+        from tqdm import tqdm
+        
+        # Process requests in batches for better throughput
+        batch_size = getattr(self, 'batch_size', 1)
+        all_results = []
+        
+        try:
+            # Create progress bar for overall progress (similar to vLLM style)
+            with tqdm(
+                total=len(requests), 
+                desc="Generating text", 
+                unit="req",
+                ncols=100,  # Fixed width for consistent display
+                position=0,  # Keep at the top
+                leave=True,  # Keep the final progress bar
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+            ) as pbar:
+                for batch_start in range(0, len(requests), batch_size):
+                    batch_end = min(batch_start + batch_size, len(requests))
+                    batch_requests = requests[batch_start:batch_end]
+                    
+                    # Submit all requests in the batch concurrently
+                    batch_tasks = [self._process_single_generate_request(req) for req in batch_requests]
+                    
+                    # Wait for all requests in the batch to complete
+                    # return_exceptions=False means exceptions will be raised immediately
+                    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=False)
+                    all_results.extend(batch_results)
+                    
+                    # Update progress bar
+                    pbar.update(len(batch_requests))
+        
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            eval_logger.info("Evaluation interrupted by user")
+            # Cancel all pending tasks
+            for task in asyncio.all_tasks():
+                if not task.done():
+                    task.cancel()
+            raise
+        
+        return all_results
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
     
     def __del__(self):
         """Cleanup"""

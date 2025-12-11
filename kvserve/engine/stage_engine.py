@@ -80,9 +80,21 @@ class StageScheduler:
             if total_tokens + tokens > self.max_tokens_per_batch:
                 break
             
+<<<<<<< HEAD
             # Check block allocation
             if not self.can_allocate_request(request):
                 break
+=======
+            # Check block allocation (MEMORY-AWARE)
+            if not self.can_allocate_request(request):
+                # Log memory pressure
+                if self.block_manager:
+                    avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                    blocks_needed = self.block_manager.get_num_blocks_needed(request)
+                    log_warning(f"[{self.stage.value}Scheduler] ⚠️  Memory pressure: Cannot allocate {blocks_needed} blocks for {request.request_id}, "
+                              f"available={avail_blocks}, keeping in waiting queue ({len(self.waiting_queue)} waiting)")
+                break  # Stop adding new requests
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             
             # Add to batch
             batch_requests.append(self.waiting_queue.popleft())
@@ -192,6 +204,10 @@ class BaseStageEngine:
                 global_rank=global_rank,
                 world_size=self.nccl_world_size,
                 nccl_init_method=self.nccl_init_method,
+<<<<<<< HEAD
+=======
+                max_model_len=self.max_model_len,
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             )
             
             self.workers.append(worker)
@@ -246,10 +262,28 @@ class BaseStageEngine:
         
         log_info(f"[{self.stage.value}Engine] Starting event loop...")
         
+<<<<<<< HEAD
+=======
+        # Track iterations for periodic logging
+        iteration = 0
+        last_block_usage_print = 0
+        
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
         while not self.pls_stop_loop.is_set():
             try:
                 await self.step()
                 await asyncio.sleep(0.001)  # Small delay to prevent busy waiting
+<<<<<<< HEAD
+=======
+                
+                # Periodically print block usage (every 1000 iterations ≈ 1 second)
+                iteration += 1
+                if iteration - last_block_usage_print >= 1000:
+                    if self.block_manager and (self.scheduler.num_waiting_requests() > 0 or self.scheduler.num_running_requests() > 0):
+                        self.block_manager.print_block_usage()
+                    last_block_usage_print = iteration
+                    
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             except Exception as e:
                 log_error(f"[{self.stage.value}Engine] Error in event loop: {e}")
                 import traceback
@@ -282,9 +316,35 @@ class PrefillEngine(BaseStageEngine):
         """Execute one prefill step"""
         # Schedule a batch
         max_batch_size = getattr(self, 'max_batch_size', 16)
+<<<<<<< HEAD
         batched_requests = self.scheduler.schedule(max_batch_size=max_batch_size)
         
         if not batched_requests:
+=======
+        
+        # Log scheduling attempt if there are waiting requests
+        if self.scheduler.waiting_queue:
+            waiting_req = self.scheduler.waiting_queue[0]
+            blocks_needed = self.block_manager.get_num_blocks_needed(waiting_req)
+            blocks_avail = self.block_manager.get_num_avail_gpu_blocks()
+            
+            if blocks_avail < blocks_needed:
+                # Memory pressure detected
+                log_warning(f"[PrefillEngine] ⚠️  Memory pressure: {len(self.scheduler.waiting_queue)} waiting, "
+                          f"next={waiting_req.request_id} needs {blocks_needed} blocks but only {blocks_avail} available")
+                self.block_manager.print_block_usage()
+            else:
+                log_debug(f"[PrefillEngine] Scheduling attempt: {len(self.scheduler.waiting_queue)} waiting, "
+                         f"next={waiting_req.request_id} needs {blocks_needed} blocks, available={blocks_avail}")
+        
+        batched_requests = self.scheduler.schedule(max_batch_size=max_batch_size)
+        
+        if not batched_requests:
+            # Log why scheduling failed
+            if self.scheduler.waiting_queue:
+                log_warning(f"[PrefillEngine] Failed to schedule, {len(self.scheduler.waiting_queue)} requests waiting, "
+                           f"{self.block_manager.get_num_avail_gpu_blocks()} blocks available")
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             await asyncio.sleep(0.01)
             return
         
@@ -347,10 +407,22 @@ class PrefillEngine(BaseStageEngine):
             
             log_debug(f"[PrefillEngine] Sending request {request.request_id} to decode (output_tokens={len(migrating_req.output_token_ids or [])})")
             await self.prefill_decode_bridge_queue.put(migrating_req)
+<<<<<<< HEAD
         
         # Finish requests
         for req in batched_requests.requests:
             self.scheduler.finish_request(req.request_id)
+=======
+            
+            # ✅ Free prefill blocks immediately after sending to decode
+            # KV cache is transferred to decode stage, prefill no longer needs these blocks
+            if request.request_id in self.block_manager.block_table:
+                log_debug(f"[PrefillEngine] Freeing {len(self.block_manager.block_table[request.request_id])} blocks for {request.request_id}")
+                self.block_manager.free_blocks(request.request_id)
+            
+            # Finish request in prefill scheduler
+            self.scheduler.finish_request(request.request_id)
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
 
 
 class DecodeEngine(BaseStageEngine):
@@ -427,6 +499,22 @@ class DecodeEngine(BaseStageEngine):
                             import traceback
                             traceback.print_exc()
                 
+<<<<<<< HEAD
+=======
+                # Check if we have enough memory for this request
+                # Calculate minimum blocks needed (prompt tokens)
+                prompt_tokens = len(request.prompt_token_ids) if request.prompt_token_ids else 0
+                min_blocks_needed = (prompt_tokens + self.block_manager.block_size - 1) // self.block_manager.block_size
+                avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                
+                if avail_blocks < min_blocks_needed:
+                    # Not enough memory, put request back to bridge queue
+                    log_warning(f"[DecodeEngine] ⚠️  Memory pressure: Not enough GPU blocks for {request.request_id} "
+                              f"(need {min_blocks_needed}, avail {avail_blocks}), putting back to queue")
+                    await self.prefill_decode_bridge_queue.put(migrating_req)
+                    break  # Stop processing more requests this iteration
+                
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
                 # Add to scheduler
                 self.scheduler.add_request(request)
                 request.decoding_start_time = time.time()
@@ -503,13 +591,35 @@ class DecodeEngine(BaseStageEngine):
         
         # Update batch to only include requests that can run
         if requests_delayed:
+<<<<<<< HEAD
             log_debug(f"[DecodeEngine] Delayed {len(requests_delayed)} requests due to memory, "
                   f"will retry next iteration")
+=======
+            log_warning(f"[DecodeEngine] ⚠️  Memory pressure: Delayed {len(requests_delayed)} requests due to insufficient blocks")
+            # Print block usage to help diagnose memory issues
+            self.block_manager.print_block_usage()
+            
+            # Put delayed requests back to front of waiting queue to retry next iteration
+            for req_id in reversed(requests_delayed):
+                # Find the request object
+                for req in batched_requests.requests:
+                    if req.request_id == req_id:
+                        self.scheduler.waiting_queue.appendleft(req)
+                        # Remove from running_requests if it was there
+                        self.scheduler.running_requests.pop(req_id, None)
+                        break
+            
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             batched_requests.requests = requests_that_can_run
         
         # If all requests were delayed, skip this step
         if not batched_requests.requests:
+<<<<<<< HEAD
             log_debug("[DecodeEngine] All requests delayed due to memory pressure, waiting...")
+=======
+            log_warning("[DecodeEngine] ⚠️  All requests delayed due to memory pressure, waiting for memory to free up...")
+            self.block_manager.print_block_usage()
+>>>>>>> c7601a7a1e297ef5ea04e70be674e52ba15e3d08
             await asyncio.sleep(0.05)
             return
         
