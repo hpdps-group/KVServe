@@ -32,25 +32,25 @@ Request → Prefill Engine → KV Transfer → Decode Engine → Output
 - Python 3.8+
 - Ray 2.49.1
 - vLLM 0.10.1+
-- PyTorch 2.8.0+ (with CUDA support)
+- PyTorch 2.7.1+ (with CUDA support)
 - transformers 4.56.1+
 - Flash Attention 2.8.1+
 
 ## Installation
 
-1. Install PyTorch with CUDA support:
-```bash
-pip install torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
-
-2. Install vLLM (if using from source):
-```bash
-pip install -e /path/to/vllm-0.10.1
-```
-
-3. Install other dependencies:
+1. Install requirements:
 ```bash
 pip install -r requirements.txt
+```
+
+2. Install KVServe:
+```bash
+pip install -e .
+```
+
+3. Install Flash Attention (recommended for better performance):
+```bash
+pip install flash-attn==2.8.1 --no-build-isolation
 ```
 
 Note: Some packages like `flash_attn` may require compilation. See individual package documentation for installation details.
@@ -161,10 +161,10 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-<<<<<<< HEAD
-### Running Tests
+## Notes
 
-```bash
+- This is a simplified version extracted from ElasticMM's V0 backend
+- Only supports Prefill-Decode separation (no Encoding stage)
 - Requires at least 2 GPUs (1 for Prefill, 1 for Decode)
 - KV transfer uses NCCL P2P by default
 

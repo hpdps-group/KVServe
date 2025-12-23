@@ -11,10 +11,12 @@ setup(
     packages=find_packages(),
     python_requires=">=3.8",
     install_requires=[
-        "ray",
-        "vllm>=0.10.1",
+        "vllm==0.10.1",
         "torch",
+        "ray[default]",
         "transformers",
+        # "flash-attn==2.8.1",
+        "lm-eval",
     ],
 )
 
