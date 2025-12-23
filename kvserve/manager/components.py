@@ -1,6 +1,6 @@
 """
 Compression components interface
-Transform, Quantizer, and Lossless Compression
+Transformer, Quantizer, and Codec Compression
 """
 
 from abc import ABC, abstractmethod
@@ -8,13 +8,13 @@ from typing import Dict, Any, Optional
 import torch
 
 
-class Transform(ABC):
-    """Transform component interface for KV cache compression"""
+class Transformer(ABC):
+    """Transformer component interface for KV cache compression"""
     
     @abstractmethod
-    def encode(self, kv_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
+    def transform(self, kv_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
         """
-        Apply transform encoding
+        Apply transform
         
         Args:
             kv_data: KV cache tensor [num_layers, 2, num_blocks, block_size, num_heads, head_size]
@@ -26,9 +26,9 @@ class Transform(ABC):
         pass
     
     @abstractmethod
-    def decode(self, transformed_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
+    def reverse(self, transformed_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
         """
-        Apply transform decoding
+        Apply transform reverse
         
         Args:
             transformed_data: Transformed tensor
@@ -74,17 +74,17 @@ class Quantizer(ABC):
         pass
 
 
-class LosslessCompression(ABC):
-    """Lossless compression component interface for KV cache compression"""
+class Codec(ABC):
+    """Codec compression component interface for KV cache compression"""
     
     @abstractmethod
     def compress(self, data: bytes, config: Dict[str, Any]) -> bytes:
         """
-        Compress data losslessly
+        Compress data
         
         Args:
             data: Input bytes to compress
-            config: Compression configuration
+            config: Codec configuration
             
         Returns:
             Compressed bytes
@@ -98,7 +98,7 @@ class LosslessCompression(ABC):
         
         Args:
             compressed_data: Compressed bytes
-            config: Compression configuration (must match compress config)
+            config: Codec configuration (must match compress config)
             
         Returns:
             Decompressed bytes

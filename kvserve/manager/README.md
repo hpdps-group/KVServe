@@ -6,9 +6,9 @@ KV cache compression framework for PD separation.
 
 The compression pipeline consists of three optional components:
 
-1. **Transform**: Transforms KV cache data (e.g., DCT, PCA)
+1. **Transformer**: Transforms KV cache data (e.g., DCT, PCA)
 2. **Quantizer**: Quantizes data to reduce precision
-3. **Lossless Compression**: Applies lossless compression (e.g., zlib, lz4)
+3. **Codec**: Applies codec compression (e.g., zlib, lz4)
 
 ## Usage
 
@@ -18,22 +18,22 @@ from kvserve.manager import CompressionManager, CompressionConfig
 # Configure compression
 config = CompressionConfig(
     enabled=True,
-    pipeline=["quantizer"],  # or ["transform", "quantizer", "lossless"]
+    pipeline=["quantizer"],  # or ["transformer", "quantizer", "codec"]
     quantizer_config={"bits": 8},
     min_compress_size=1024,
 )
 
-# Initialize components (implement Transform/Quantizer/LosslessCompression)
+# Initialize components (implement Transformer/Quantizer/Codec)
 # my_transform = MyTransform()
 # my_quantizer = MyQuantizer()
-# my_lossless = MyLosslessCompression()
+# my_codec = MyCodec()
 
 # Create manager
 manager = CompressionManager(
     config=config,
-    # transform=my_transform,
+    # transformer=my_transformer,
     quantizer=my_quantizer,
-    # lossless=my_lossless,
+    # codec=my_codec,
 )
 
 # Compress
@@ -51,14 +51,14 @@ decompressed = manager.decompress(compressed)
 
 The compression pipeline processes data in order:
 
-1. **Compress**: Transform → Quantize → Lossless → Transfer
-2. **Decompress**: Transfer → Lossless → Dequantize → Transform (reverse)
+1. **Compress**: Transformer(transform) → Quantizer(quantize) → Codec(encode) → Transfer
+2. **Decompress**: Transfer → Codec(decode) → Quantizer(dequantize) → Transformer(reverse)
 
 ## Components
 
 Implement the abstract base classes:
-- `Transform`: `encode()` and `decode()` methods
+- `Transformer`: `transform()` and `reverse()` methods
 - `Quantizer`: `quantize()` and `dequantize()` methods  
-- `LosslessCompression`: `compress()` and `decompress()` methods
+- `Codec`: `encode()` and `decode()` methods
 
 

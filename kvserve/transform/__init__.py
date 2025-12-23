@@ -1,9 +1,9 @@
 """
-Transform components for KV cache compression
+Transformer components for KV cache compression
 """
 
-# Placeholder for future transform implementations
-# Components should inherit from kvserve.manager.components.Transform
+# Placeholder for future transformer implementations
+# Components should inherit from kvserve.manager.components.Transformer
 
 __all__ = []
 

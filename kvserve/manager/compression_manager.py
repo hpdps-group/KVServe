@@ -1,13 +1,14 @@
 """
 Compression Manager for KV cache compression
-Coordinates transform, quantization, and lossless compression components
+Coordinates transformer, quantizer, and codec compression components
 """
 
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import torch
 
-from kvserve.manager.components import Transform, Quantizer, LosslessCompression
+from kvserve.manager.components import Transformer, Quantizer, Codec
+from kvserve.quantizer import KVServeQuantizer
 
 
 @dataclass
@@ -18,10 +19,10 @@ class CompressionConfig:
     # Component configurations
     transform_config: Optional[Dict[str, Any]] = None
     quantizer_config: Optional[Dict[str, Any]] = None
-    lossless_config: Optional[Dict[str, Any]] = None
+    codec_config: Optional[Dict[str, Any]] = None
     
     # Compression pipeline: which components to use (ordered list)
-    pipeline: Optional[List[str]] = None  # e.g., ["transform", "quantizer", "lossless"] or ["quantizer"]
+    pipeline: Optional[List[str]] = None  # e.g., ["transformer", "quantizer", "codec"] or ["quantizer"]
     
     # Threshold: don't compress if data size is below this (bytes)
     min_compress_size: int = 0
@@ -40,42 +41,43 @@ class CompressedKVData:
 class CompressionManager:
     """
     Manages KV cache compression pipeline
-    Coordinates transform, quantization, and lossless compression components
+    Coordinates transformer, quantizer, and codec compression components
     """
     
     def __init__(
         self,
         config: CompressionConfig,
-        transform: Optional[Transform] = None,
+        transformer: Optional[Transformer] = None,
         quantizer: Optional[Quantizer] = None,
-        lossless: Optional[LosslessCompression] = None,
+        codec: Optional[Codec] = None,
     ):
         """
         Initialize Compression Manager
         
         Args:
             config: Compression configuration
-            transform: Transform component (optional)
+            transformer: Transformer component (optional)
             quantizer: Quantizer component (optional)
-            lossless: Lossless compression component (optional)
+            codec: Codec compression component (optional)
         """
         self.config = config
-        self.transform = transform
-        self.quantizer = quantizer
-        self.lossless = lossless
+        self.transformer = transformer
+        self.quantizer = quantizer(**config.quantizer_config) if quantizer else None
+        self.codec = codec
         
         # Validate pipeline components are available
         if config.enabled and config.pipeline:
             for component_name in config.pipeline:
-                if component_name == "transform" and self.transform is None:
-                    raise ValueError("Transform component required but not provided")
+                if component_name == "transformer" and self.transformer is None:
+                    raise ValueError("Transformer component required but not provided")
                 elif component_name == "quantizer" and self.quantizer is None:
                     raise ValueError("Quantizer component required but not provided")
-                elif component_name == "lossless" and self.lossless is None:
-                    raise ValueError("Lossless compression component required but not provided")
+                elif component_name == "codec" and self.codec is None:
+                    raise ValueError("Codec compression component required but not provided")
     
     def compress(
         self,
+        layer_id: int,
         kv_data: Any,  # torch.Tensor or similar
         request_id: str,
         metadata: Dict[str, Any],
@@ -84,7 +86,7 @@ class CompressionManager:
         Compress KV cache data using configured pipeline
         
         Args:
-            kv_data: KV cache tensor [num_layers, 2, num_blocks, block_size, num_heads, head_size]
+            kv_data: KV cache tensor [2, num_blocks, block_size, num_heads, head_size]
             request_id: Request ID for tracking
             metadata: Additional metadata (block indices, etc.)
             
@@ -111,43 +113,45 @@ class CompressionManager:
                 "request_id": request_id,
                 "pipeline": self.config.pipeline.copy(),
                 "original_size": original_size,
+                "device": kv_data.device,
                 **metadata,
             }
             
-            # Step 1: Transform (if in pipeline)
-            if "transform" in self.config.pipeline:
-                current_data = self.transform.encode(
+            # Step 1: Transformer (if in pipeline)
+            if "transformer" in self.config.pipeline:
+                current_data = self.transformer.transform(
                     current_data,
                     self.config.transform_config or {}
                 )
-                compression_metadata["transform_applied"] = True
+                compression_metadata["transformer_applied"] = True
             
             # Step 2: Quantization (if in pipeline)
             quantization_params = None
             if "quantizer" in self.config.pipeline:
                 current_data, quantization_params = self.quantizer.quantize(
+                    layer_id,
                     current_data,
-                    self.config.quantizer_config or {}
+                    **self.config.quantizer_config
                 )
                 compression_metadata["quantization_params"] = quantization_params
                 compression_metadata["quantization_applied"] = True
             
-            # Step 3: Lossless compression (if in pipeline)
+            # Step 3: Codec compression (if in pipeline)
             # Save tensor shape and dtype before converting to bytes
             if isinstance(current_data, torch.Tensor):
                 compression_metadata["tensor_shape"] = list(current_data.shape)
                 compression_metadata["tensor_dtype"] = str(current_data.dtype).replace("torch.", "")
             
-            if "lossless" in self.config.pipeline:
+            if "codec" in self.config.pipeline:
                 # Convert to bytes first (implementation depends on data format)
                 data_bytes = self._tensor_to_bytes(current_data)
-                compressed_bytes = self.lossless.compress(
+                compressed_bytes = self.codec.compress(
                     data_bytes,
-                    self.config.lossless_config or {}
+                    self.config.codec_config or {}
                 )
-                compression_metadata["lossless_applied"] = True
+                compression_metadata["codec_applied"] = True
             else:
-                # If no lossless compression, just convert to bytes
+                # If no codec compression, just convert to bytes
                 compressed_bytes = self._tensor_to_bytes(current_data)
             
             compressed_size = len(compressed_bytes)
@@ -167,6 +171,7 @@ class CompressionManager:
     
     def decompress(
         self,
+        layer_id: int,
         compressed_data: CompressedKVData,
     ) -> Optional[Any]:  # Returns torch.Tensor or similar
         """
@@ -188,11 +193,11 @@ class CompressionManager:
             
             current_data = compressed_data.compressed_bytes
             
-            # Step 1: Lossless decompression (reverse order)
-            if "lossless" in pipeline:
-                current_data = self.lossless.decompress(
+            # Step 1: Codec decompression (reverse order)
+            if "codec" in pipeline:
+                current_data = self.codec.decompress(
                     current_data,
-                    self.config.lossless_config or {}
+                    self.config.codec_config or {}
                 )
             
             # Step 2: Dequantization (if in pipeline)
@@ -204,17 +209,18 @@ class CompressionManager:
                 # Convert bytes to tensor first
                 tensor_data = self._bytes_to_tensor(current_data, compressed_data.metadata)
                 current_data = self.quantizer.dequantize(
+                    layer_id,
                     tensor_data,
                     quantization_params,
-                    self.config.quantizer_config or {}
+                    **self.config.quantizer_config
                 )
             else:
                 # Convert bytes to tensor
                 current_data = self._bytes_to_tensor(current_data, compressed_data.metadata)
             
-            # Step 3: Transform decode (if in pipeline)
-            if "transform" in pipeline:
-                current_data = self.transform.decode(
+            # Step 3: Transformer reverse (if in pipeline)
+            if "transformer" in pipeline:
+                current_data = self.transformer.reverse(
                     current_data,
                     self.config.transform_config or {}
                 )
@@ -249,7 +255,7 @@ class CompressionManager:
             import pickle
             return pickle.dumps(tensor)
     
-    def _bytes_to_tensor(self, data_bytes: bytes, metadata: Dict[str, Any]) -> Any:
+    def _bytes_to_tensor(self, data_bytes: Any, metadata: Dict[str, Any]) -> Any:
         """
         Convert bytes back to tensor
         
@@ -259,6 +265,9 @@ class CompressionManager:
         import torch
         import numpy as np
         
+        if isinstance(data_bytes, torch.Tensor):
+            return data_bytes
+
         # Extract shape and dtype from metadata if available
         shape = metadata.get("tensor_shape")
         dtype_str = metadata.get("tensor_dtype", "float16")
@@ -266,14 +275,15 @@ class CompressionManager:
         if shape:
             # Map torch dtype to numpy dtype
             dtype_map = {
-                "float16": np.float16,
                 "float32": np.float32,
+                "float16": np.float16,
                 "bfloat16": np.float16,  # bfloat16 may need special handling
+                "uint8": np.uint8,
             }
             np_dtype = dtype_map.get(dtype_str, np.float16)
             np_array = np.frombuffer(data_bytes, dtype=np_dtype)
-            tensor = torch.from_numpy(np_array.reshape(shape))
-            return tensor
+            tensor = torch.from_numpy(np_array.reshape(shape).copy())
+            return tensor.to(metadata.get("device", "cpu"))
         else:
             # Fallback: assume it was pickled
             import pickle

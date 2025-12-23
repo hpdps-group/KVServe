@@ -2,14 +2,15 @@
 Compression Manager for KV cache compression in PD separation
 """
 
-from kvserve.manager.compression_manager import CompressionManager
-from kvserve.manager.components import Transform, Quantizer, LosslessCompression
+from kvserve.manager.compression_manager import CompressionManager, CompressionConfig
+from kvserve.manager.components import Transformer, Quantizer, Codec
 
 __all__ = [
     "CompressionManager",
-    "Transform",
+    "CompressionConfig",
+    "Transformer",
     "Quantizer",
-    "LosslessCompression",
+    "Codec",
 ]
 
 
