@@ -36,3 +36,6 @@ scipy
 # Utilities
 protobuf
 
+# KVServe's pipeline module
+fast_hadamard_transform # For Transformer
+nvidia-nvcomp-cu12 # For Codec

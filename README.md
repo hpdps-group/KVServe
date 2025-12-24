@@ -35,17 +35,18 @@ Request → Prefill Engine → KV Transfer → Decode Engine → Output
 - PyTorch 2.7.1+ (with CUDA support)
 - transformers 4.56.1+
 - Flash Attention 2.8.1+
+- nvCOMP (Python API)
 
 ## Installation
 
-1. Install requirements:
-```bash
-pip install -r requirements.txt
-```
-
-2. Install KVServe:
+1. Install KVServe:
 ```bash
 pip install -e .
+```
+
+2. Install requirements:
+```bash
+pip install -r requirements.txt
 ```
 
 3. Install Flash Attention (recommended for better performance):

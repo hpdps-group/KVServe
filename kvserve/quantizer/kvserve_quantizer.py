@@ -48,6 +48,9 @@ class KVServeQuantizer(Quantizer):
         self.axis_key = kwargs.get("axis_key", "channel")
         self.axis_value = kwargs.get("axis_value", "token")
         self.split_type = kwargs.get("split_type", "head")
+        
+        # Validate quantizer parameters
+        self.validate()
 
         # Head level: get head scores and masks from model name
         self.head_scores = DuoConfigGenerator.get_scores_from_csv(self.model_name)
@@ -67,9 +70,6 @@ class KVServeQuantizer(Quantizer):
         # self._high_quantized_value_cache = Deque[torch.Tensor]()
         # self._low_quantized_key_cache = Deque[torch.Tensor]()
         # self._low_quantized_value_cache = Deque[torch.Tensor]()
-
-        # Validate quantizer parameters
-        self.validate()
 
     def validate(
         self,

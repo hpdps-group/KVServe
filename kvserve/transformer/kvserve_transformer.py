@@ -27,12 +27,17 @@ class KVServeTransformer(Transformer):
         # Update parameters from kwargs
         self.transform_type = kwargs.get("transform_type", "hadamard")
         self.seed = kwargs.get("seed", 0x3333)
-        
-        # Initialize the transform functions
-        self.hadamard_transform = HadamardTransform(self.seed)
+        self.transformer = None
 
-        # Validate the parameters
+        # Validate transformer parameters
         self.validate()
+
+        # Initialize the transform functions
+        match self.transform_type:
+            case "hadamard":
+                self.transformer = HadamardTransform(self.seed)
+            case _:
+                raise ValueError(f"Invalid transform type: {self.transform_type}")
 
     def validate(
         self,
@@ -66,6 +71,12 @@ class KVServeTransformer(Transformer):
         # Validate the parameters
         self.validate()
 
+        match self.transform_type:
+            case "hadamard":
+                self.transformer = HadamardTransform(self.seed)
+            case _:
+                raise ValueError(f"Invalid transform type: {self.transform_type}")
+
     def transform(
         self, 
         layer_id: int,
@@ -94,12 +105,9 @@ class KVServeTransformer(Transformer):
         values = tensor[1]
 
         # Apply transformation to keys and values
-        if self.transform_type == "hadamard":
-            keys = self.hadamard_transform.transform(layer_id, keys, **kwargs)
-            values = self.hadamard_transform.transform(layer_id, values, **kwargs)
-            return torch.stack([keys, values], dim=0)
-        else:
-            raise ValueError(f"Invalid transform type: {self.transform_type}")
+        keys = self.transformer.transform(layer_id, keys, **kwargs)
+        values = self.transformer.transform(layer_id, values, **kwargs)
+        return torch.stack([keys, values], dim=0)
 
     def inverse(
         self, 
@@ -123,9 +131,6 @@ class KVServeTransformer(Transformer):
         values = tensor[1]
 
         # Apply inverse transformation to keys and values
-        if self.transform_type == "hadamard":
-            keys = self.hadamard_transform.inverse(layer_id, keys, **kwargs)
-            values = self.hadamard_transform.inverse(layer_id, values, **kwargs)
-            return torch.stack([keys, values], dim=0)
-        else:
-            raise ValueError(f"Invalid transform type: {self.transform_type}")
+        keys = self.transformer.inverse(layer_id, keys, **kwargs)
+        values = self.transformer.inverse(layer_id, values, **kwargs)
+        return torch.stack([keys, values], dim=0)

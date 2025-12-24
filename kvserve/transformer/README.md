@@ -120,32 +120,9 @@ print(f"Cosine similarity: {cosine_similarity.item()}")
   - Splits dimension into descending powers-of-two chunks
   - Applies transform to each chunk separately
 
-## Technical Details
-
-### Hadamard Transform Properties
-
-- **Orthogonality**: Hadamard matrix is symmetric and orthogonal (scaled)
-- **Invertibility**: Inverse transform is proportional to forward transform
-- **Efficiency**: FWHT can be computed in O(n log n) time
-
-### Rademacher Signs
-
-- Deterministic random signs generated from seed
-- Each head in each layer gets unique signs
-- Signs are cached to avoid repeated generation
-- Used to introduce randomness while maintaining reproducibility
-
-### Non-Power-of-Two Handling
-
-When `head_dim` is not a power of two:
-- Dimension is split into descending powers-of-two chunks
-- Example: 96 = 64 + 32, 100 = 64 + 32 + 4
-- Each chunk is transformed separately
-- Results are concatenated back together
-
 ## Dependencies
 
 The transformer module requires:
-- `fast_hadamard_transform`: Fast CUDA implementation of Hadamard transform
+- [fast_hadamard_transform](https://github.com/Dao-AILab/fast-hadamard-transform): Fast CUDA implementation of Hadamard transform
 - PyTorch for tensor operations
 

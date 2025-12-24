@@ -17,6 +17,8 @@ setup(
         "transformers",
         # "flash-attn==2.8.1",
         "lm-eval",
+        "fast_hadamard_transform"
+        "nvidia-nvcomp-cu12"
     ],
 )
 
