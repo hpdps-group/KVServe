@@ -63,7 +63,7 @@ class CompressionManager:
         self.config = config
         self.transformer = transformer(**config.transformer_config) if transformer else None
         self.quantizer = quantizer(**config.quantizer_config) if quantizer else None
-        self.codec = codec
+        self.codec = codec(**config.codec_config) if codec else None
         
         # Validate pipeline components are available
         if config.enabled and config.pipeline:
@@ -140,15 +140,15 @@ class CompressionManager:
             # Step 3: Codec compression (if in pipeline)
             # Save tensor shape and dtype before converting to bytes
             if isinstance(current_data, torch.Tensor):
-                compression_metadata["tensor_shape"] = list(current_data.shape)
-                compression_metadata["tensor_dtype"] = str(current_data.dtype).replace("torch.", "")
+                compression_metadata["original_shape"] = list(current_data.shape)
+                compression_metadata["original_dtype"] = str(current_data.dtype).replace("torch.", "")
             
             if "codec" in self.config.pipeline:
                 # Convert to bytes first (implementation depends on data format)
-                data_bytes = self._tensor_to_bytes(current_data)
-                compressed_bytes = self.codec.compress(
-                    data_bytes,
-                    self.config.codec_config or {}
+                compressed_bytes = self.codec.encode(
+                    layer_id,
+                    current_data,
+                    **self.config.codec_config
                 )
                 compression_metadata["codec_applied"] = True
             else:
@@ -196,16 +196,25 @@ class CompressionManager:
             
             # Step 1: Codec decompression (reverse order)
             if "codec" in pipeline:
-                current_data = self.codec.decompress(
+                original_dtype = compressed_data.metadata.get("original_dtype")
+                original_shape = compressed_data.metadata.get("original_shape")
+                device = compressed_data.metadata.get("device")
+                assert original_dtype is not None and original_shape is not None and device is not None, \
+                    "Original dtype, shape, and device are required for decompression"
+                current_data = self.codec.decode(
+                    layer_id,
                     current_data,
-                    self.config.codec_config or {}
+                    original_dtype,
+                    original_shape,
+                    device,
+                    **self.config.codec_config
                 )
             
             # Step 2: Dequantization (if in pipeline)
             if "quantizer" in pipeline:
                 quantization_params = compressed_data.metadata.get("quantization_params")
-                if quantization_params is None:
-                    raise ValueError("Quantization params missing in compressed data")
+                assert quantization_params is not None, \
+                    "Quantization params are required for dequantization"
                 
                 # Convert bytes to tensor first
                 tensor_data = self._bytes_to_tensor(current_data, compressed_data.metadata)
@@ -271,8 +280,8 @@ class CompressionManager:
             return data_bytes
 
         # Extract shape and dtype from metadata if available
-        shape = metadata.get("tensor_shape")
-        dtype_str = metadata.get("tensor_dtype", "float16")
+        shape = metadata.get("original_shape")
+        dtype_str = metadata.get("original_dtype", "float16")
         
         if shape:
             # Map torch dtype to numpy dtype

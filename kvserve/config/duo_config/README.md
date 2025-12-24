@@ -4,7 +4,7 @@ This module provides tools to generate DuoAttention configuration for KVServe's 
 
 ## Overview
 
-DuoAttention is a method to identify which attention heads are important for long-context retrieval ("Retrieval Heads") and which are only attending to local context ("Streaming Heads"). This module computes the attention scores for each layer's KV heads to help configure the DuoAttention mechanism in KVServe.
+[DuoAttention](https://arxiv.org/abs/2410.10819) is a method to identify which attention heads are important for long-context retrieval ("Retrieval Heads") and which are only attending to local context ("Streaming Heads"). This module computes the attention scores for each layer's KV heads to help configure the DuoAttention mechanism in KVServe.
 
 Specifically, based on the computed DuoAttention scores, we categorize the attention heads into **High-Precision Compression Heads** and **Low-Precision Compression Heads**:
 

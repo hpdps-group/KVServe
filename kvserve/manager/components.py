@@ -78,9 +78,9 @@ class Codec(ABC):
     """Codec compression component interface for KV cache compression"""
     
     @abstractmethod
-    def compress(self, data: bytes, config: Dict[str, Any]) -> bytes:
+    def encode(self, data: bytes, config: Dict[str, Any]) -> bytes:
         """
-        Compress data
+        Encode data
         
         Args:
             data: Input bytes to compress
@@ -92,9 +92,9 @@ class Codec(ABC):
         pass
     
     @abstractmethod
-    def decompress(self, compressed_data: bytes, config: Dict[str, Any]) -> bytes:
+    def decode(self, compressed_data: bytes, config: Dict[str, Any]) -> bytes:
         """
-        Decompress data
+        Decode data
         
         Args:
             compressed_data: Compressed bytes
