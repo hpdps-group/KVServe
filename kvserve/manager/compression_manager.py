@@ -17,7 +17,7 @@ class CompressionConfig:
     enabled: bool = False
     
     # Component configurations
-    transform_config: Optional[Dict[str, Any]] = None
+    transformer_config: Optional[Dict[str, Any]] = None
     quantizer_config: Optional[Dict[str, Any]] = None
     codec_config: Optional[Dict[str, Any]] = None
     
@@ -61,7 +61,7 @@ class CompressionManager:
             codec: Codec compression component (optional)
         """
         self.config = config
-        self.transformer = transformer
+        self.transformer = transformer(**config.transformer_config) if transformer else None
         self.quantizer = quantizer(**config.quantizer_config) if quantizer else None
         self.codec = codec
         
@@ -120,8 +120,9 @@ class CompressionManager:
             # Step 1: Transformer (if in pipeline)
             if "transformer" in self.config.pipeline:
                 current_data = self.transformer.transform(
+                    layer_id,
                     current_data,
-                    self.config.transform_config or {}
+                    **self.config.transformer_config
                 )
                 compression_metadata["transformer_applied"] = True
             
@@ -218,11 +219,12 @@ class CompressionManager:
                 # Convert bytes to tensor
                 current_data = self._bytes_to_tensor(current_data, compressed_data.metadata)
             
-            # Step 3: Transformer reverse (if in pipeline)
+            # Step 3: Transformer  (if in pipeline)
             if "transformer" in pipeline:
-                current_data = self.transformer.reverse(
+                current_data = self.transformer.inverse(
+                    layer_id,
                     current_data,
-                    self.config.transform_config or {}
+                    **self.config.transformer_config
                 )
             
             return current_data

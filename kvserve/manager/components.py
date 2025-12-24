@@ -26,9 +26,9 @@ class Transformer(ABC):
         pass
     
     @abstractmethod
-    def reverse(self, transformed_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
+    def inverse(self, transformed_data: torch.Tensor, config: Dict[str, Any]) -> torch.Tensor:
         """
-        Apply transform reverse
+        Apply transform inverse
         
         Args:
             transformed_data: Transformed tensor

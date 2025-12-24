@@ -52,12 +52,12 @@ decompressed = manager.decompress(compressed)
 The compression pipeline processes data in order:
 
 1. **Compress**: Transformer(transform) → Quantizer(quantize) → Codec(encode) → Transfer
-2. **Decompress**: Transfer → Codec(decode) → Quantizer(dequantize) → Transformer(reverse)
+2. **Decompress**: Transfer → Codec(decode) → Quantizer(dequantize) → Transformer(inverse)
 
 ## Components
 
 Implement the abstract base classes:
-- `Transformer`: `transform()` and `reverse()` methods
+- `Transformer`: `transform()` and `inverse()` methods
 - `Quantizer`: `quantize()` and `dequantize()` methods  
 - `Codec`: `encode()` and `decode()` methods
 
