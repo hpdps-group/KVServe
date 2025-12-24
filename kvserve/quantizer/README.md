@@ -33,7 +33,7 @@ from kvserve.manager import CompressionManager, CompressionConfig
 from kvserve.quantizer import KVServeQuantizer
 
 # Generate random tensor for shape [k/v, num_blocks, block_size, num_heads, head_size]
-kv_cache = torch.rand(2, 128, 32, 8, 128, dtype=torch.bfloat16, device="cuda")
+kv_cache = torch.randn(2, 128, 32, 8, 128, dtype=torch.bfloat16, device="cuda")
 
 # Configure compression with quantizer
 config = CompressionConfig(

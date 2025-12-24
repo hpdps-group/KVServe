@@ -12,7 +12,7 @@ def quantize(
     axis: str, 
 ) -> Tuple[torch.Tensor, Dict]:
     """
-    Quantize tensor using min-max quantization
+w    Quantize tensor using min-max quantization
     
     Maps tensor values from [min, max] range to [0, max_value] integer range.
     Uses per-axis min/max calculation for better precision preservation.

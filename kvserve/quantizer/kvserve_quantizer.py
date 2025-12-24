@@ -22,7 +22,7 @@ class KVServeQuantizer(Quantizer):
     def __init__(
         self, 
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize KVServe Quantizer
         
@@ -67,7 +67,47 @@ class KVServeQuantizer(Quantizer):
         # self._high_quantized_value_cache = Deque[torch.Tensor]()
         # self._low_quantized_key_cache = Deque[torch.Tensor]()
         # self._low_quantized_value_cache = Deque[torch.Tensor]()
+
+        # Validate quantizer parameters
+        self.validate()
+
+    def validate(
+        self,
+    ) -> None:
+        """
+        Validate quantizer parameters
         
+        Args:
+            **kwargs: Parameters to validate.
+                hybrid_ratio: Ratio of heads/layers to use low precision
+                high_key_max_value: Max quantization value for high precision keys
+                high_value_max_value: Max quantization value for high precision values
+                low_key_max_value: Max quantization value for low precision keys
+                low_value_max_value: Max quantization value for low precision values
+                axis_key: Quantization axis for keys, "channel" "token" or "tensor"
+                axis_value: Quantization axis for values, "channel" "token" or "tensor"
+                split_type: Split strategy, "head" or "layer"
+        """
+        assert self.hybrid_ratio >= 0 and self.hybrid_ratio <= 1, \
+            f"hybrid_ratio must be between 0 and 1, got {self.hybrid_ratio}"
+        assert self.low_key_max_value > 0 and self.low_key_max_value < 255, \
+            f"low_key_max_value must be greater than 0 and less than 255, got {self.low_key_max_value}"
+        assert self.low_value_max_value > 0 and self.low_value_max_value < 255, \
+            f"low_value_max_value must be greater than 0 and less than 255, got {self.low_value_max_value}"
+        assert self.high_key_max_value > 0 and self.high_key_max_value < 255, \
+            f"high_key_max_value must be greater than 0 and less than 255, got {self.high_key_max_value}"
+        assert self.high_value_max_value > 0 and self.high_value_max_value < 255, \
+            f"high_value_max_value must be greater than 0 and less than 255, got {self.high_value_max_value}"
+        assert self.low_key_max_value <= self.high_key_max_value, \
+            f"low_key_max_value must be less than high_key_max_value, got low_key_max_value: {self.low_key_max_value} and high_key_max_value: {self.high_key_max_value}"
+        assert self.low_value_max_value <= self.high_value_max_value, \
+            f"low_value_max_value must be less than high_value_max_value, got low_value_max_value: {self.low_value_max_value} and high_value_max_value: {self.high_value_max_value}"
+        assert self.axis_key in ["channel", "token", "tensor"], \
+            f"axis_key must be 'channel', 'token' or 'tensor', got {self.axis_key}"
+        assert self.axis_value in ["channel", "token", "tensor"], \
+            f"axis_value must be 'channel', 'token' or 'tensor', got {self.axis_value}"
+        assert self.split_type in ["head", "layer"], \
+            f"split_type must be 'head' or 'layer', got {self.split_type}"
 
     def update_params(
         self,
@@ -94,6 +134,9 @@ class KVServeQuantizer(Quantizer):
             if hasattr(self, key):
                 setattr(self, key, value)        
 
+        # Validate quantizer parameters
+        self.validate()
+
     def quantize(
         self, 
         layer_id: int,
@@ -115,7 +158,9 @@ class KVServeQuantizer(Quantizer):
                 metadata: Dictionary containing quantization parameters for dequantization
         """
         # Update quantizer parameters for every request
-        self.update_params(**kwargs)
+        # Only update parameters for the first layer
+        if layer_id == 0:
+            self.update_params(**kwargs)
 
         # Split the tensor into keys and values
         keys = tensor[0]
@@ -136,9 +181,9 @@ class KVServeQuantizer(Quantizer):
         low_values, low_value_meta = quantize(self.low_value_max_value, low_values, self.axis_value)
 
         # Concatenate the low and high precision parts
-        keys = torch.cat([low_keys, high_keys], dim=2).unsqueeze(0)
-        values = torch.cat([low_values, high_values], dim=2).unsqueeze(0)
-        tensor = torch.cat([keys, values], dim=0)
+        keys = torch.cat([low_keys, high_keys], dim=2)
+        values = torch.cat([low_values, high_values], dim=2)
+        tensor = torch.stack([keys, values], dim=0)
         
         # Prepare the metadata for dequantization
         meta_data = {
@@ -195,6 +240,6 @@ class KVServeQuantizer(Quantizer):
             values = layer_reconstruct(layer_id, low_values, high_values, self.layer_scores_mask)
 
         # Concatenate the keys and values
-        tensor = torch.cat([keys.unsqueeze(0), values.unsqueeze(0)], dim=0)
+        tensor = torch.stack([keys, values], dim=0)
         return tensor
 
