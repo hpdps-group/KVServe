@@ -17,6 +17,7 @@ from kvserve.engine.utils import (
     BatchedRequests,
     MigratingRequest,
     StepOutput,
+    KVTransferStatus,
 )
 from kvserve.engine.block_manager import BlockManager, BlockLocation
 from kvserve.engine.worker import Worker
@@ -77,7 +78,9 @@ class StageScheduler:
             
             # Check token budget
             tokens = request.get_total_len()
-            if total_tokens + tokens > self.max_tokens_per_batch:
+            # ✅ FIX: Allow at least one request even if it exceeds max_tokens_per_batch
+            # This prevents deadlock when a single request is larger than the batch limit
+            if batch_requests and total_tokens + tokens > self.max_tokens_per_batch:
                 break
             
             # Check block allocation (MEMORY-AWARE)
@@ -86,7 +89,8 @@ class StageScheduler:
                 if self.block_manager:
                     avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
                     blocks_needed = self.block_manager.get_num_blocks_needed(request)
-                    log_warning(f"[{self.stage.value}Scheduler] ⚠️  Memory pressure: Cannot allocate {blocks_needed} blocks for {request.request_id}, "
+                    # Use debug level to avoid log spam during normal memory pressure
+                    log_debug(f"[{self.stage.value}Scheduler] Memory pressure: Cannot allocate {blocks_needed} blocks for {request.request_id}, "
                               f"available={avail_blocks}, keeping in waiting queue ({len(self.waiting_queue)} waiting)")
                 break  # Stop adding new requests
             
@@ -96,6 +100,13 @@ class StageScheduler:
             total_tokens += tokens
         
         if batch_requests:
+            # ✅ Diagnostic: print scheduler state periodically
+            if not hasattr(self, '_schedule_call_count'):
+                self._schedule_call_count = 0
+                self._last_schedule_print = 0
+            
+            self._schedule_call_count += 1
+            
             return BatchedRequests(requests=batch_requests)
         return None
     
@@ -158,7 +169,12 @@ class BaseStageEngine:
         )
         
         # Scheduler
-        self.scheduler = StageScheduler(stage, block_manager=self.block_manager)
+        # Limit max_tokens_per_batch to prevent activation memory OOM.
+        # Derive from available decode blocks instead of a fixed constant.
+        # We do NOT cap by max_model_len here; batching can include multiple shorter requests.
+        budget_tokens = int(self.block_size * self.block_manager.max_num_gpu_blocks * 0.8)
+        max_tokens_per_batch = budget_tokens
+        self.scheduler = StageScheduler(stage, block_manager=self.block_manager, max_tokens_per_batch=max_tokens_per_batch)
         
         # Status
         self.status = EngineStatus.INACTIVE
@@ -309,10 +325,16 @@ class PrefillEngine(BaseStageEngine):
             blocks_avail = self.block_manager.get_num_avail_gpu_blocks()
             
             if blocks_avail < blocks_needed:
-                # Memory pressure detected
-                log_warning(f"[PrefillEngine] ⚠️  Memory pressure: {len(self.scheduler.waiting_queue)} waiting, "
+                # Memory pressure detected - use debug to avoid spam
+                log_debug(f"[PrefillEngine] Memory pressure: {len(self.scheduler.waiting_queue)} waiting, "
                           f"next={waiting_req.request_id} needs {blocks_needed} blocks but only {blocks_avail} available")
-                self.block_manager.print_block_usage()
+                # Only print block usage once every 100 steps to avoid spam
+                if not hasattr(self, '_memory_pressure_log_count'):
+                    self._memory_pressure_log_count = 0
+                self._memory_pressure_log_count += 1
+                if self._memory_pressure_log_count % 100 == 1:
+                    log_warning(f"[PrefillEngine] ⚠️  Prolonged memory pressure: {len(self.scheduler.waiting_queue)} requests waiting")
+                    self.block_manager.print_block_usage()
             else:
                 log_debug(f"[PrefillEngine] Scheduling attempt: {len(self.scheduler.waiting_queue)} waiting, "
                          f"next={waiting_req.request_id} needs {blocks_needed} blocks, available={blocks_avail}")
@@ -327,8 +349,10 @@ class PrefillEngine(BaseStageEngine):
             await asyncio.sleep(0.01)
             return
         
-        # Allocate blocks
-        self.block_manager.allocate_blocks_batched(batched_requests)
+        # ✅ OPTIMIZATION: Use minimal allocation for prefill
+        # Only allocate prompt + small margin (16 tokens)
+        # Will expand dynamically in decode stage as needed
+        self.block_manager.allocate_blocks_batched(batched_requests, minimal=True)
         
         # Get block tables
         kv_block_tables = {
@@ -400,26 +424,396 @@ class PrefillEngine(BaseStageEngine):
 class DecodeEngine(BaseStageEngine):
     """Decode stage engine"""
     
-    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, max_batch_size: int = 32, **kwargs):
+    def __init__(self, prefill_decode_bridge_queue: asyncio.Queue, max_batch_size: int = 32, enable_multi_stream: bool = False, **kwargs):
         super().__init__(stage=EngineStage.DECODING, **kwargs)
         self.prefill_decode_bridge_queue = prefill_decode_bridge_queue
         self.max_batch_size = max_batch_size
         self.output_callback = None
+        # Requests waiting for GPU blocks (do not count toward active capacity)
+        self.mem_wait_queue = deque()  # type: ignore[var-annotated]
+        # For requests that haven't allocated blocks yet (need migrating metadata)
+        self.mem_wait_meta: Dict[str, MigratingRequest] = {}
+        
+        # Multi-stream optimization
+        self.enable_multi_stream = enable_multi_stream
+        if self.enable_multi_stream:
+            import ray
+            
+            # ✅ TRUE ASYNC: Manage transfer ObjectRefs (not tasks)
+            self.transfer_refs = {}        # {request_id: ray.ObjectRef}
+            self.transfer_workers = {}     # {request_id: worker_ref}
+            self.transfer_start_times = {} # {request_id: start_time}
+            self.transfer_metadata = {}    # {request_id: metadata dict}
+            
+            self.transfer_queue = deque()  # Requests with transfer started
+            self.ready_queue = deque()     # Requests ready for decode
+            
+            # Transfer statistics
+            self.transfer_stats = {
+                "total_transfers": 0,
+                "successful_transfers": 0,
+                "failed_transfers": 0,
+                "total_transfer_time": 0.0,
+                "total_wait_time": 0.0,      # Time spent waiting at sync point
+            }
+            log_info(f"[DecodeEngine] 🚀 Multi-stream optimization ENABLED (TRUE ASYNC)")
     
     def set_output_callback(self, callback):
         """Set callback for outputs"""
         self.output_callback = callback
+
+    # ---------- Capacity helpers ----------
+    def _get_active_count(self) -> int:
+        """
+        Active = running + ready + transferring.
+        
+        ✅ CRITICAL FIX: Must include transfer_queue!
+        Requests in transfer_queue have blocks allocated and are actively processing,
+        so they must count toward active capacity to prevent over-admission.
+        
+        Waiting/mem_wait do NOT consume active capacity.
+        """
+        active = self.scheduler.num_running_requests()
+        if hasattr(self, "ready_queue"):
+            active += len(self.ready_queue)
+        if hasattr(self, "transfer_queue"):
+            active += len(self.transfer_queue)  # ✅ Include transferring requests!
+        return active
+
+    def _get_active_count(self) -> int:
+        """
+        Active = running + ready + transferring.
+        
+        ✅ CRITICAL FIX: Must include transfer_queue!
+        Requests in transfer_queue have blocks allocated and are actively processing,
+        so they must count toward active capacity to prevent over-admission.
+        
+        Waiting/mem_wait do NOT consume active capacity.
+        """
+        active = self.scheduler.num_running_requests()
+        if hasattr(self, "ready_queue"):
+            active += len(self.ready_queue)
+        if hasattr(self, "transfer_queue"):
+            active += len(self.transfer_queue)  # ✅ Include transferring requests!
+        return active
+
+    def _mark_mem_wait(self, request: Request, migrating_req: Optional[MigratingRequest] = None):
+        """Place request into mem-wait queue without counting toward active."""
+        # Avoid duplicates
+        if request.request_id not in {r.request_id for r in self.mem_wait_queue}:
+            self.mem_wait_queue.append(request)
+        if migrating_req:
+            self.mem_wait_meta[request.request_id] = migrating_req
+        log_debug(f"[DecodeEngine] {request.request_id} moved to mem-wait queue")
+
+    async def _cleanup_request(self, request: Request, reason: str = ""):
+        """Unified cleanup: release blocks and remove from all queues/state."""
+        req_id = request.request_id
+        
+        # Remove from scheduler queues
+        self.scheduler.waiting_queue = deque([r for r in self.scheduler.waiting_queue if r.request_id != req_id])
+        self.scheduler.running_requests.pop(req_id, None)
+        
+        # Remove from ready/transfer/mem_wait queues
+        if hasattr(self, "ready_queue"):
+            self.ready_queue = deque([r for r in self.ready_queue if r.request_id != req_id])
+        if hasattr(self, "transfer_queue"):
+            self.transfer_queue = deque([r for r in self.transfer_queue if r.request_id != req_id])
+        self.mem_wait_queue = deque([r for r in self.mem_wait_queue if r.request_id != req_id])
+        self.mem_wait_meta.pop(req_id, None)
+        
+        # Clear async transfer bookkeeping if any
+        for attr in ["transfer_refs", "transfer_workers", "transfer_start_times", "transfer_metadata"]:
+            if hasattr(self, attr):
+                getattr(self, attr).pop(req_id, None)
+        
+        # Free blocks if allocated
+        if req_id in self.block_manager.block_table:
+            self.block_manager.free_blocks(req_id)
+        
+        # Mark state
+        request.is_finished = True
+        if reason:
+            request.finish_reason = reason
+        
+        # Try to promote mem-wait requests now that blocks may have freed
+        await self._drain_mem_wait_queue(multistream=self.enable_multi_stream)
+
+    async def _drain_mem_wait_queue(self, multistream: bool = False):
+        """Try to re-activate requests that were waiting for memory."""
+        if not self.mem_wait_queue:
+            return
+        
+        # Iterate over a copy to allow removal
+        for req in list(self.mem_wait_queue):
+            req_id = req.request_id
+            migrating_req = self.mem_wait_meta.get(req_id)
+            
+            try:
+                if migrating_req:
+                    # Request still needs initial allocation + transfer
+                    blocks_needed = len(migrating_req.kv_block_indexes or [])
+                    avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                    if avail_blocks < blocks_needed:
+                        continue
+                    
+                    # Allocate blocks
+                    self.block_manager.allocate_blocks(req, num_blocks=blocks_needed)
+                    dst_blocks = self.block_manager.get_block_table(req_id)
+                    
+                    if multistream:
+                        # Start async transfer
+                        await self._start_async_transfer(req, migrating_req)
+                    else:
+                        dst_worker = self.get_next_worker()
+                        if not dst_worker:
+                            continue
+                        src_rank = 0
+                        dst_rank = await dst_worker.get_global_rank.remote()
+                        try:
+                            success = await self.kv_transfer_manager.transfer_kv_cache(
+                                request_id=req_id,
+                                src_rank=src_rank,
+                                dst_rank=dst_rank,
+                                src_blocks=migrating_req.kv_block_indexes,
+                                dst_blocks=dst_blocks,
+                            )
+                            if not success:
+                                await self._cleanup_request(req, reason="transfer_failed")
+                                continue
+                        except Exception as e:
+                            log_error(f"[DecodeEngine] KV transfer error during mem-wait drain: {e}")
+                            await self._cleanup_request(req, reason="transfer_exception")
+                            continue
+                    
+                    # Promotion successful
+                    self.mem_wait_meta.pop(req_id, None)
+                    self.mem_wait_queue.remove(req)
+                    self.scheduler.add_request(req)
+                    req.decoding_start_time = time.time()
+                    log_debug(f"[DecodeEngine] {req_id} re-activated from mem-wait (initial allocation)")
+                    continue
+                
+                # Expansion path: request already has some blocks
+                prompt_tokens = len(req.prompt_token_ids) if req.prompt_token_ids else 0
+                output_tokens = len(req.output_token_ids) if req.output_token_ids else 0
+                total_seq_len = prompt_tokens + output_tokens
+                blocks_needed = (total_seq_len + self.block_manager.block_size - 1) // self.block_manager.block_size
+                current_blocks = len(self.block_manager.block_table.get(req_id, []))
+                additional_blocks_needed = max(0, blocks_needed - current_blocks)
+                
+                if additional_blocks_needed > 0:
+                    avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                    if avail_blocks < additional_blocks_needed:
+                        continue
+                    new_blocks = self.block_manager._get_free_blocks(additional_blocks_needed, BlockLocation.GPU)
+                    self.block_manager.block_table.setdefault(req_id, []).extend(new_blocks)
+                
+                # Ready to run again
+                self.mem_wait_queue.remove(req)
+                self.scheduler.add_request(req)
+                log_debug(f"[DecodeEngine] {req_id} re-activated from mem-wait (expansion)")
+            
+            except Exception as e:
+                log_error(f"[DecodeEngine] Error draining mem-wait for {req_id}: {e}")
+                await self._cleanup_request(req, reason="mem_wait_drain_error")
+    
+    async def _start_async_transfer(self, request: Request, migrating_req):
+        """
+        🚀 TRUE ASYNC: Start transfer and return immediately (non-blocking)
+        """
+        if not self.kv_transfer_manager or not migrating_req.kv_block_indexes:
+            # No transfer needed
+            request.kv_transfer_status = KVTransferStatus.READY
+            self.ready_queue.append(request)
+            return
+        
+        try:
+            # Allocate blocks (caller has already checked availability)
+            blocks_needed = len(migrating_req.kv_block_indexes)
+            self.block_manager.allocate_blocks(request, num_blocks=blocks_needed)
+            dst_blocks = self.block_manager.get_block_table(request.request_id)
+            
+            # Get worker
+            dst_worker = self.get_next_worker()
+            if not dst_worker:
+                log_warning(f"[DecodeEngine] No worker available for {request.request_id}")
+                return
+            
+            src_rank = 0  # Prefill worker
+            dst_rank = await dst_worker.get_global_rank.remote()
+            request.assigned_worker_rank = dst_rank
+            
+            # ✅ Start async transfer - returns ObjectRef immediately
+            result = await self.kv_transfer_manager.transfer_kv_cache_async(
+                request_id=request.request_id,
+                src_rank=src_rank,
+                dst_rank=dst_rank,
+                src_blocks=migrating_req.kv_block_indexes,
+                dst_blocks=dst_blocks,
+            )
+            
+            if result.get("success"):
+                # ✅ Store ObjectRef for later waiting
+                self.transfer_refs[request.request_id] = result["transfer_ref"]
+                self.transfer_workers[request.request_id] = result["dst_worker"]
+                self.transfer_start_times[request.request_id] = result["start_time"]
+                self.transfer_metadata[request.request_id] = result
+                
+                request.kv_transfer_status = KVTransferStatus.TRANSFERRING
+                self.transfer_queue.append(request)
+                
+                log_info(f"[DECODE] start_transfer: added {request.request_id} to transfer_queue, len={len(self.transfer_queue)}")
+                log_debug(f"🚀 [DecodeEngine] Started NON-BLOCKING transfer for {request.request_id}")
+            else:
+                log_error(f"[DecodeEngine] Failed to start transfer for {request.request_id}: "
+                         f"{result.get('error', 'Unknown')}")
+                request.kv_transfer_status = KVTransferStatus.FAILED
+        
+        except Exception as e:
+            log_error(f"[DecodeEngine] Exception starting transfer for {request.request_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            request.kv_transfer_status = KVTransferStatus.FAILED
+    
+    async def _wait_and_sync_transfer(self, request: Request):
+        """
+        ✅ TRUE SYNC POINT: Wait for transfer completion and sync CUDA stream
+        
+        This is where we actually wait for the transfer to complete.
+        Called just before decode, maximizing overlap opportunity.
+        """
+        request_id = request.request_id
+        
+        # Check if transfer is pending
+        if request_id not in self.transfer_refs:
+            return  # Already completed or no transfer needed
+        
+        import ray
+        import time
+        
+        transfer_ref = self.transfer_refs.pop(request_id)
+        worker_ref = self.transfer_workers.pop(request_id)
+        start_time = self.transfer_start_times.pop(request_id)
+        metadata = self.transfer_metadata.pop(request_id)
+        
+        wait_start = time.perf_counter()
+        log_info(f"[DecodeEngine] Wait transfer {request_id} pending={len(self.transfer_refs)}")
+        
+        try:
+            # ✅ Wait for transfer to complete
+            log_debug(f"⏳ [DecodeEngine] Waiting for transfer completion: {request_id}")
+            transfer_result = await transfer_ref
+            
+            # ✅ Sync CUDA stream (critical!)
+            sync_result = await worker_ref.sync_comm_stream.remote()
+            
+            wait_elapsed = time.perf_counter() - wait_start
+            total_elapsed = time.perf_counter() - start_time
+            sync_time = sync_result.get("elapsed", 0)
+            
+            if "error" not in transfer_result:
+                # Success
+                bytes_transferred = transfer_result.get("bytes", 0)
+                
+                # ✅ FIX: Use actual transfer time from worker, not total elapsed time
+                # total_elapsed includes queuing time, we want actual transfer time
+                actual_transfer_time = transfer_result.get("elapsed", 0)  # From worker
+                if actual_transfer_time == 0:
+                    actual_transfer_time = wait_elapsed  # Fallback to wait time
+                
+                bandwidth_gbps = (bytes_transferred / 1e9) / actual_transfer_time if actual_transfer_time > 0 else 0
+                
+                request.kv_transfer_time = actual_transfer_time  # Use actual transfer time
+                request.kv_transfer_complete = True
+                request.kv_transfer_status = KVTransferStatus.READY
+                
+                # Update stats
+                self.transfer_stats["total_transfers"] += 1
+                self.transfer_stats["successful_transfers"] += 1
+                self.transfer_stats["total_transfer_time"] += actual_transfer_time  # Use actual time
+                self.transfer_stats["total_wait_time"] += wait_elapsed
+                
+                log_info(f"✅ [DecodeEngine] Transfer complete for {request_id}: "
+                        f"total={total_elapsed*1000:.1f}ms, "
+                        f"wait={wait_elapsed*1000:.1f}ms, "
+                        f"sync={sync_time*1000:.1f}ms, "
+                        f"{bandwidth_gbps:.2f} GB/s")
+            else:
+                # Failed
+                error = transfer_result.get("error", "Unknown error")
+                log_error(f"❌ [DecodeEngine] Transfer failed for {request_id}: {error}")
+                request.kv_transfer_status = KVTransferStatus.FAILED
+                self.transfer_stats["failed_transfers"] += 1
+        
+        except Exception as e:
+            log_error(f"❌ [DecodeEngine] Exception waiting for transfer {request_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            request.kv_transfer_status = KVTransferStatus.FAILED
+            self.transfer_stats["failed_transfers"] += 1
+    
+    async def _poll_transferring_requests(self):
+        """
+        🔄 Poll transferring requests using non-blocking ray.wait()
+        
+        Check which transfers have completed without blocking.
+        """
+        if not self.transfer_refs:
+            return
+        
+        import ray
+        
+        # Get all pending transfers
+        pending_refs = list(self.transfer_refs.values())
+        request_ids = list(self.transfer_refs.keys())
+        
+        log_debug(f"[DECODE] poll_transfer: checking {len(pending_refs)} pending transfers")
+        
+        # ✅ Non-blocking check: which transfers are ready?
+        ready_refs, remaining_refs = ray.wait(
+            pending_refs,
+            num_returns=len(pending_refs),
+            timeout=0  # Non-blocking!
+        )
+        
+        log_info(f"[DECODE] poll_transfer: ready={len(ready_refs)} remaining={len(remaining_refs)} transfer_q={len(self.transfer_queue)}")
+        
+        if ready_refs:
+            log_info(f"[DecodeEngine] Transfers ready={len(ready_refs)} pending={len(remaining_refs)}")
+        
+        # Mark completed transfers (but don't sync yet - that happens in _wait_and_sync_transfer)
+        for ref in ready_refs:
+            # Find corresponding request_id
+            for i, req_id in enumerate(request_ids):
+                if self.transfer_refs.get(req_id) == ref:
+                    # Find the request object
+                    for req in list(self.transfer_queue):
+                        if req.request_id == req_id:
+                            req.kv_transfer_status = KVTransferStatus.READY
+                            self.ready_queue.append(req)
+                            self.transfer_queue.remove(req)
+                            log_info(f"[DecodeEngine] Transfer ready {req_id} tq={len(self.transfer_queue)} rq={len(self.ready_queue)}")
+                            break
+                    break
     
     async def _receive_from_prefill(self):
         """Receive requests from prefill stage"""
+        received_count = 0
         while not self.prefill_decode_bridge_queue.empty():
             try:
                 migrating_req = await asyncio.wait_for(
                     self.prefill_decode_bridge_queue.get(),
                     timeout=0.001
                 )
+                received_count += 1
                 
                 request = migrating_req.req
+                
+                # Backpressure: limit waiting queue size
+                if len(self.scheduler.waiting_queue) >= self.max_batch_size:
+                    await self.prefill_decode_bridge_queue.put(migrating_req)
+                    break
                 
                 # Restore expanded prompt tokens
                 if migrating_req.expanded_prompt_token_ids:
@@ -432,10 +826,28 @@ class DecodeEngine(BaseStageEngine):
                 else:
                     log_warning(f"[DecodeEngine] No output_token_ids in migrating_req for {request.request_id}")
                 
+                # Admission: only count active (running + ready), waiting should not block
+                active = self._get_active_count()
+                max_active = self.max_batch_size
+                if active >= max_active:
+                    log_debug(f"[DecodeEngine] Active cap reached ({active}/{max_active}), deferring {request.request_id}")
+                    await self.prefill_decode_bridge_queue.put(migrating_req)
+                    break
+                
                 # Transfer KV cache from prefill to decode
                 if self.kv_transfer_manager and migrating_req.kv_block_indexes:
-                    # Allocate blocks in decode stage first
-                    self.block_manager.allocate_blocks(request, num_blocks=len(migrating_req.kv_block_indexes))
+                    # Check blocks BEFORE allocating
+                    blocks_needed = len(migrating_req.kv_block_indexes)
+                    avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                    
+                    if avail_blocks < blocks_needed:
+                        # Not enough blocks, park into mem-wait (non-active)
+                        log_debug(f"[DecodeEngine] Blocks insufficient for {request.request_id}: need {blocks_needed}, avail {avail_blocks} -> mem-wait")
+                        self._mark_mem_wait(request, migrating_req)
+                        continue
+                    
+                    # Safe to allocate now
+                    self.block_manager.allocate_blocks(request, num_blocks=blocks_needed)
                     dst_blocks = self.block_manager.get_block_table(request.request_id)
                     
                     # Get destination worker and rank
@@ -466,23 +878,14 @@ class DecodeEngine(BaseStageEngine):
                                 log_debug(f"[Decode] KV cache transferred for {request.request_id} in {transfer_time*1000:.2f}ms")
                             else:
                                 log_warning(f"[Decode] KV cache transfer failed for {request.request_id}")
+                                await self._cleanup_request(request, reason="transfer_failed")
+                                continue
                         except Exception as e:
                             log_error(f"[Decode] KV cache transfer error: {e}")
                             import traceback
                             traceback.print_exc()
-                
-                # Check if we have enough memory for this request
-                # Calculate minimum blocks needed (prompt tokens)
-                prompt_tokens = len(request.prompt_token_ids) if request.prompt_token_ids else 0
-                min_blocks_needed = (prompt_tokens + self.block_manager.block_size - 1) // self.block_manager.block_size
-                avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
-                
-                if avail_blocks < min_blocks_needed:
-                    # Not enough memory, put request back to bridge queue
-                    log_warning(f"[DecodeEngine] ⚠️  Memory pressure: Not enough GPU blocks for {request.request_id} "
-                              f"(need {min_blocks_needed}, avail {avail_blocks}), putting back to queue")
-                    await self.prefill_decode_bridge_queue.put(migrating_req)
-                    break  # Stop processing more requests this iteration
+                            await self._cleanup_request(request, reason="transfer_exception")
+                            continue
                 
                 # Add to scheduler
                 self.scheduler.add_request(request)
@@ -491,18 +894,46 @@ class DecodeEngine(BaseStageEngine):
                 
             except asyncio.TimeoutError:
                 break
+        
+        # ✅ Periodic diagnostic (every 5 seconds)
+        if not hasattr(self, '_last_diagnostic_time'):
+            self._last_diagnostic_time = 0
+        
+        if time.time() - self._last_diagnostic_time > 5:
+            queue_size = self.prefill_decode_bridge_queue.qsize()
+            num_waiting = self.scheduler.num_waiting_requests()
+            num_running = self.scheduler.num_running_requests()
+            avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+            
+            if queue_size > 0 or num_waiting > 0 or num_running > 0:
+                self._last_diagnostic_time = time.time()
     
     async def step(self):
         """Execute one decode step"""
+        if self.enable_multi_stream:
+            # Multi-stream optimized path
+            await self._step_multistream()
+        else:
+            # Original single-stream path
+            await self._step_singlestream()
+    
+    async def _step_singlestream(self):
+        """Original single-stream decode step"""
+        await self._drain_mem_wait_queue(multistream=False)
         # Receive requests from prefill
         await self._receive_from_prefill()
         
         # Schedule a batch
-        batched_requests = self.scheduler.schedule(max_batch_size=32)
+        batched_requests = self.scheduler.schedule(max_batch_size=self.max_batch_size)
         
         if not batched_requests:
             await asyncio.sleep(0.01)
             return
+        
+        # ✅ Force print to diagnose decode execution
+        if not hasattr(self, '_decode_step_count'):
+            self._decode_step_count = 0
+        self._decode_step_count += 1
         
         log_debug(f"[DecodeEngine] Scheduling batch of {len(batched_requests)} requests")
         
@@ -515,20 +946,16 @@ class DecodeEngine(BaseStageEngine):
         
         for request in batched_requests.requests:
             if request.request_id not in self.block_manager.block_table:
-                # First time seeing this request in decode, should have been allocated in _receive_from_prefill
                 log_warning(f"[DecodeEngine] {request.request_id} has no blocks allocated!")
                 continue
             
-            # Calculate blocks needed based on current sequence length
+            # Calculate blocks needed
             prompt_tokens = len(request.prompt_token_ids) if request.prompt_token_ids else 0
             output_tokens = len(request.output_token_ids) if request.output_token_ids else 0
             total_seq_len = prompt_tokens + output_tokens
             
-            # Calculate blocks needed based on current sequence length
-            # For decode, we need blocks for prompt + all output tokens generated so far
-            # Add 1 block margin to reduce frequent re-allocation
-            blocks_needed = ((total_seq_len + self.block_manager.block_size - 1) // self.block_manager.block_size) + 1
-            
+            # Only allocate what is needed to avoid premature block exhaustion
+            blocks_needed = (total_seq_len + self.block_manager.block_size - 1) // self.block_manager.block_size
             current_blocks = len(self.block_manager.block_table[request.request_id])
             
             # Check if expansion is needed
@@ -536,43 +963,38 @@ class DecodeEngine(BaseStageEngine):
                 additional_blocks_needed = blocks_needed - current_blocks
                 avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
                 
-                log_debug(f"[DecodeEngine] Block expansion check for {request.request_id}: "
-                      f"seq_len={total_seq_len} (prompt={prompt_tokens}+output={output_tokens}), "
-                      f"blocks_needed={blocks_needed}, current={current_blocks}, "
-                      f"need_add={additional_blocks_needed}, avail={avail_blocks}")
+                # ✅ Diagnostic: print first few expansion attempts
+                if not hasattr(self, '_expansion_checks'):
+                    self._expansion_checks = 0
+                self._expansion_checks += 1
                 
-                # Check if we have enough blocks for expansion
                 if avail_blocks < additional_blocks_needed:
-                    # Not enough blocks, delay this request
+                    # Move to mem-wait and free compute capacity
+                    log_debug(f"[DecodeEngine] {request.request_id} waiting for {additional_blocks_needed} blocks (avail={avail_blocks}) -> mem-wait")
+                    self.scheduler.running_requests.pop(request.request_id, None)
+                    self._mark_mem_wait(request)
                     requests_delayed.append(request.request_id)
-                    log_debug(f"[DecodeEngine] Delayed {request.request_id} due to insufficient blocks")
                     continue
                 
-                # Allocate additional blocks directly (like ElasticMM)
+                # Allocate additional blocks
                 new_blocks = self.block_manager._get_free_blocks(additional_blocks_needed, BlockLocation.GPU)
                 self.block_manager.block_table[request.request_id].extend(new_blocks)
-                
                 log_debug(f"[DecodeEngine] Expanded blocks for {request.request_id}: "
-                      f"{current_blocks} -> {blocks_needed} blocks (+{additional_blocks_needed})")
+                      f"{current_blocks} -> {blocks_needed} blocks")
             
-            # This request can run in current iteration
+            # This request can run
             requests_that_can_run.append(request)
         
         # Update batch to only include requests that can run
         if requests_delayed:
-            log_warning(f"[DecodeEngine] ⚠️  Memory pressure: Delayed {len(requests_delayed)} requests due to insufficient blocks")
-            # Print block usage to help diagnose memory issues
-            self.block_manager.print_block_usage()
-            
-            # Put delayed requests back to front of waiting queue to retry next iteration
-            for req_id in reversed(requests_delayed):
-                # Find the request object
-                for req in batched_requests.requests:
-                    if req.request_id == req_id:
-                        self.scheduler.waiting_queue.appendleft(req)
-                        # Remove from running_requests if it was there
-                        self.scheduler.running_requests.pop(req_id, None)
-                        break
+            log_debug(f"[DecodeEngine] Memory pressure: Delayed {len(requests_delayed)} requests due to insufficient blocks")
+            # Only print detailed info periodically to avoid spam
+            if not hasattr(self, '_decode_memory_pressure_count'):
+                self._decode_memory_pressure_count = 0
+            self._decode_memory_pressure_count += 1
+            if self._decode_memory_pressure_count % 50 == 1:
+                log_warning(f"[DecodeEngine] ⚠️  Prolonged memory pressure: {len(requests_delayed)} requests delayed")
+                self.block_manager.print_block_usage()
             
             batched_requests.requests = requests_that_can_run
         
@@ -605,6 +1027,9 @@ class DecodeEngine(BaseStageEngine):
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             import traceback
             traceback.print_exc()
+            # Cleanup affected requests to avoid leaks
+            for req in batched_requests.requests:
+                await self._cleanup_request(req, reason="decode_exception")
             await asyncio.sleep(0.1)
             return
         step_end = time.time()
@@ -632,14 +1057,284 @@ class DecodeEngine(BaseStageEngine):
                     log_warning(f"[DecodeEngine] No output callback set!")
                 
                 if output.finished:
-                    request.is_finished = True
-                    request.finish_reason = output.finish_reason
                     request.decoding_end_time = time.time()
+                    await self._cleanup_request(request, reason=output.finish_reason or "finished")
+    
+    async def _step_multistream(self):
+        """
+        🚀 TRUE ASYNC Multi-stream decode step
+        
+        Key difference from single-stream:
+        1. Transfers start immediately and return (non-blocking)
+        2. Poll for completed transfers without blocking
+        3. Only wait for transfer when we actually need to decode
+        4. Sync CUDA stream just before compute
+        """
+        log_info(f"[DECODE] step_ms_start: transfer_refs={len(self.transfer_refs)} transfer_q={len(self.transfer_queue)} ready_q={len(self.ready_queue)}")
+        
+        # STEP 1: Receive new requests and start async transfers (non-blocking!)
+        await self._receive_from_prefill_multistream()
+        log_info(f"[DECODE] after_receive: transfer_refs={len(self.transfer_refs)} transfer_q={len(self.transfer_queue)} ready_q={len(self.ready_queue)}")
+        
+        # Try to re-activate mem-wait requests
+        await self._drain_mem_wait_queue(multistream=True)
+        
+        # STEP 2: Poll for completed transfers (non-blocking check)
+        await self._poll_transferring_requests()
+        log_info(f"[DECODE] after_poll: transfer_refs={len(self.transfer_refs)} transfer_q={len(self.transfer_queue)} ready_q={len(self.ready_queue)}")
+        
+        # STEP 3: Add ready requests to scheduler
+        await self._add_ready_to_scheduler()
+        log_info(f"[DECODE] after_add_ready: waiting={len(self.scheduler.waiting_queue)} running={len(self.scheduler.running_requests)}")
+        
+        # STEP 4: Schedule a batch
+        batched_requests = self.scheduler.schedule(max_batch_size=self.max_batch_size)
+        
+        if not batched_requests:
+            await asyncio.sleep(0.01)
+            return
+        
+        # STEP 5: ✅ SYNC POINT: Wait for transfers and sync CUDA streams
+        # This is where we actually wait - just before compute!
+        for request in batched_requests.requests:
+            await self._wait_and_sync_transfer(request)
+        
+        # STEP 6: Execute compute (now KV cache is ready)
+        await self._execute_compute_batch(batched_requests)
+    
+    async def _receive_from_prefill_multistream(self):
+        """Receive requests and start async transfers (non-blocking)"""
+        processed = 0
+        while not self.prefill_decode_bridge_queue.empty():
+            try:
+                migrating_req = await asyncio.wait_for(
+                    self.prefill_decode_bridge_queue.get(),
+                    timeout=0.001
+                )
+                
+                request = migrating_req.req
+                
+                # Backpressure: limit waiting queue size
+                if len(self.scheduler.waiting_queue) >= self.max_batch_size:
+                    await self.prefill_decode_bridge_queue.put(migrating_req)
+                    break
+                
+                # Admission based on active (running + ready + transfer)
+                active = self._get_active_count()
+                max_active = self.max_batch_size
+                if active >= max_active:
+                    await self.prefill_decode_bridge_queue.put(migrating_req)
+                    break
+                
+                # Check blocks BEFORE processing
+                if migrating_req.kv_block_indexes:
+                    blocks_needed = len(migrating_req.kv_block_indexes)
+                    avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
                     
-                    # Free blocks (only if allocated)
-                    if request.request_id in self.block_manager.block_table:
-                        self.block_manager.free_blocks(request.request_id)
-                    
-                    # Finish request in scheduler
-                    self.scheduler.finish_request(request.request_id)
+                    if avail_blocks < blocks_needed:
+                        self._mark_mem_wait(request, migrating_req)
+                        continue
+                
+                # Restore tokens
+                if migrating_req.expanded_prompt_token_ids:
+                    request.prompt_token_ids = migrating_req.expanded_prompt_token_ids
+                if migrating_req.output_token_ids:
+                    request.output_token_ids = migrating_req.output_token_ids
+                
+                # ✅ Start async transfer (blocks are guaranteed available)
+                await self._start_async_transfer(request, migrating_req)
+                
+            except asyncio.TimeoutError:
+                break
+    
+    async def _add_ready_to_scheduler(self):
+        """Add ready requests to scheduler"""
+        if self.ready_queue:
+            log_debug(f"[DECODE] add_ready: processing {len(self.ready_queue)} ready requests")
+        
+        processed = []
+        
+        for request in list(self.ready_queue):
+            if request.kv_transfer_status == KVTransferStatus.READY:
+                # Check memory
+                prompt_tokens = len(request.prompt_token_ids) if request.prompt_token_ids else 0
+                min_blocks_needed = (prompt_tokens + self.block_manager.block_size - 1) // self.block_manager.block_size
+                avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                
+                if avail_blocks < min_blocks_needed:
+                    log_debug(f"[DecodeEngine] {request.request_id} waiting for memory "
+                             f"(need {min_blocks_needed}, avail {avail_blocks}) -> mem-wait")
+                    self._mark_mem_wait(request)
+                    processed.append(request)  # remove from ready_queue to avoid active pressure
+                    continue
+                
+                # Add to scheduler
+                self.scheduler.add_request(request)
+                request.decoding_start_time = time.time()
+                processed.append(request)
+                
+                log_debug(f"[DecodeEngine] Added {request.request_id} to scheduler")
+        
+        # Remove processed
+        for req in processed:
+            self.ready_queue.remove(req)
+    
+    async def _execute_compute_batch(self, batched_requests):
+        """Execute compute batch (shared by both single and multi-stream)"""
+        from kvserve.engine.block_manager import BlockLocation
+        
+        log_debug(f"[DecodeEngine] Scheduling batch of {len(batched_requests)} requests")
+        
+        # Dynamic block expansion
+        requests_that_can_run = []
+        requests_delayed = []
+        
+        for request in batched_requests.requests:
+            if request.request_id not in self.block_manager.block_table:
+                log_warning(f"[DecodeEngine] {request.request_id} has no blocks allocated!")
+                continue
+            
+            # Calculate blocks needed
+            prompt_tokens = len(request.prompt_token_ids) if request.prompt_token_ids else 0
+            output_tokens = len(request.output_token_ids) if request.output_token_ids else 0
+            total_seq_len = prompt_tokens + output_tokens
+            
+            blocks_needed = ((total_seq_len + self.block_manager.block_size - 1) // self.block_manager.block_size) + 1
+            current_blocks = len(self.block_manager.block_table[request.request_id])
+            
+            # Check if expansion needed
+            if current_blocks < blocks_needed:
+                additional_blocks_needed = blocks_needed - current_blocks
+                avail_blocks = self.block_manager.get_num_avail_gpu_blocks()
+                
+                if avail_blocks < additional_blocks_needed:
+                    # Move to mem-wait instead of cycling in scheduler
+                    log_debug(f"[DecodeEngine] {request.request_id} needs {additional_blocks_needed} blocks (avail={avail_blocks}) -> mem-wait")
+                    self.scheduler.running_requests.pop(request.request_id, None)
+                    self._mark_mem_wait(request)
+                    requests_delayed.append(request.request_id)
+                    continue
+                
+                # Allocate additional blocks
+                new_blocks = self.block_manager._get_free_blocks(additional_blocks_needed, BlockLocation.GPU)
+                self.block_manager.block_table[request.request_id].extend(new_blocks)
+                
+                log_debug(f"[DecodeEngine] Expanded blocks for {request.request_id}: "
+                         f"{current_blocks} -> {blocks_needed} blocks (+{additional_blocks_needed})")
+            
+            requests_that_can_run.append(request)
+        
+        # Handle delayed requests
+        if requests_delayed:
+            log_debug(f"[DecodeEngine] Memory pressure: Delayed {len(requests_delayed)} requests")
+            # Periodic warning only
+            if not hasattr(self, '_multistream_memory_pressure_count'):
+                self._multistream_memory_pressure_count = 0
+            self._multistream_memory_pressure_count += 1
+            if self._multistream_memory_pressure_count % 50 == 1:
+                log_warning(f"[DecodeEngine] ⚠️  Prolonged memory pressure (multi-stream): {len(requests_delayed)} requests delayed")
+                self.block_manager.print_block_usage()
+            
+            batched_requests.requests = requests_that_can_run
+        
+        if not batched_requests.requests:
+            log_warning("[DecodeEngine] ⚠️  All requests delayed due to memory pressure")
+            await asyncio.sleep(0.05)
+            return
+        
+        # Get block tables
+        kv_block_tables = {
+            req.request_id: self.block_manager.get_block_table(req.request_id)
+            for req in batched_requests.requests
+        }
+        
+        # Get worker
+        worker = self.get_next_worker()
+        if not worker:
+            return
+        
+        # Execute decode
+        step_start = time.time()
+        try:
+            outputs = await worker.step_decode.remote(batched_requests, kv_block_tables)
+        except Exception as e:
+            log_error(f"[DecodeEngine] Error in step_decode: {e}")
+            for req in batched_requests.requests:
+                await self._cleanup_request(req, reason="decode_exception")
+            await asyncio.sleep(0.1)
+            return
+        step_end = time.time()
+        
+        if not outputs:
+            log_warning(f"[DecodeEngine] No outputs returned from worker")
+            await asyncio.sleep(0.1)
+            return
+        
+        # Handle outputs
+        log_debug(f"[DecodeEngine] Received {len(outputs)} outputs from worker")
+        for output in outputs:
+            request = next((r for r in batched_requests.requests if r.request_id == output.request_id), None)
+            if request:
+                request.output_token_ids = output.output_token_ids
+                request.total_decode_compute_time += (step_end - step_start)
+                
+                log_debug(f"[DecodeEngine] Request {output.request_id}: tokens={len(output.output_token_ids)}, finished={output.finished}")
+                
+                # Call output callback
+                if self.output_callback:
+                    log_debug(f"[DecodeEngine] Calling output callback for {output.request_id} (finished={output.finished})")
+                    await self.output_callback(output)
+                else:
+                    log_warning(f"[DecodeEngine] No output callback set!")
+                
+                # Finish if done
+                if output.finished:
+                    request.decoding_end_time = time.time()
+                    await self._cleanup_request(request, reason=output.finish_reason or "finished")
+    
+    def get_multistream_stats(self) -> dict:
+        """
+        Get multi-stream statistics (TRUE ASYNC version)
+        """
+        if not self.enable_multi_stream:
+            return {"enabled": False}
+        
+        # Calculate average times
+        avg_transfer_time = 0.0
+        avg_wait_time = 0.0
+        if self.transfer_stats["successful_transfers"] > 0:
+            avg_transfer_time = (self.transfer_stats["total_transfer_time"] / 
+                               self.transfer_stats["successful_transfers"])
+            avg_wait_time = (self.transfer_stats["total_wait_time"] / 
+                           self.transfer_stats["successful_transfers"])
+        
+        # Overlap ratio: how much time we saved by overlapping
+        overlap_ratio = 0.0
+        if avg_transfer_time > 0:
+            overlap_ratio = max(0.0, (avg_transfer_time - avg_wait_time) / avg_transfer_time)
+        
+        return {
+            "enabled": True,
+            "mode": "TRUE_ASYNC",  # Indicate this is true async mode
+            
+            # Queue states
+            "transfer_queue_size": len(self.transfer_queue),
+            "ready_queue_size": len(self.ready_queue),
+            "pending_transfers": len(self.transfer_refs),  # Transfers not yet complete
+            
+            # Transfer statistics
+            "total_transfers": self.transfer_stats["total_transfers"],
+            "successful_transfers": self.transfer_stats["successful_transfers"],
+            "failed_transfers": self.transfer_stats["failed_transfers"],
+            
+            # Timing analysis
+            "avg_transfer_time_ms": avg_transfer_time * 1000,
+            "avg_wait_time_ms": avg_wait_time * 1000,  # Time spent waiting at sync point
+            "avg_overlap_time_ms": (avg_transfer_time - avg_wait_time) * 1000,
+            "overlap_ratio": overlap_ratio,  # How much we overlapped (0=none, 1=perfect)
+            
+            # Scheduler state
+            "scheduler_waiting": self.scheduler.num_waiting_requests(),
+            "scheduler_running": self.scheduler.num_running_requests(),
+        }
 

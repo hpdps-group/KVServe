@@ -196,10 +196,34 @@ class BlockManager:
                 )
                 self.block_table[request.request_id] += additional_blocks
     
-    def allocate_blocks_batched(self, batched_requests: BatchedRequests):
-        """Allocate blocks for a batch of requests"""
+    def allocate_blocks_batched(self, batched_requests: BatchedRequests, minimal: bool = False):
+        """
+        Allocate blocks for a batch of requests
+        
+        Args:
+            batched_requests: Batch of requests to allocate blocks for
+            minimal: If True, allocate minimal blocks (prompt + small margin) instead of full length.
+                    This is useful for "waiting" requests that haven't started decoding yet.
+        """
         for request in batched_requests.requests:
-            self.allocate_blocks(request)
+            if minimal and request.request_id not in self.block_table:
+                # ✅ OPTIMIZATION: For new requests in waiting queue, only allocate minimal blocks
+                # Allocate: prompt_length + 16 tokens margin (1-2 blocks typically)
+                prompt_len = len(request.prompt_token_ids) if request.prompt_token_ids else 0
+                output_len = len(request.output_token_ids) if request.output_token_ids else 0
+                current_len = prompt_len + output_len
+                
+                # Add margin: 16 tokens (enough for initial decode steps)
+                minimal_len = current_len + 16
+                minimal_blocks = (minimal_len + self.block_size - 1) // self.block_size
+                
+                logger.debug(f"[{self.stage}] Minimal allocation for {request.request_id}: "
+                           f"{minimal_blocks} blocks (prompt={prompt_len}, current={current_len})")
+                
+                self.allocate_blocks(request, num_blocks=minimal_blocks)
+            else:
+                # Normal allocation: full length or expansion
+                self.allocate_blocks(request)
     
     def free_blocks(self, request_id: str):
         """Free blocks for a request"""

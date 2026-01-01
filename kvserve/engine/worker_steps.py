@@ -145,6 +145,13 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
             from vllm.sequence import SequenceData, SequenceGroupMetadata
             from vllm import SamplingParams
             
+            # 🔄 MULTI-STREAM: Sync communication stream before compute
+            # This ensures KV transfer is complete before we use the KV cache
+            if hasattr(worker, 'comm_stream') and worker.comm_stream is not None:
+                sync_result = worker.sync_comm_stream()
+                if sync_result.get('elapsed', 0) > 0.001:  # > 1ms
+                    log_debug(f"[Decode] Waited {sync_result['elapsed']*1000:.2f}ms for KV transfer")
+            
             # Track decode steps
             if not hasattr(worker, '_decode_steps'):
                 worker._decode_steps = {}

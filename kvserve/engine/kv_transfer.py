@@ -65,7 +65,7 @@ class KVTransferManager:
         dst_blocks: List[int],
     ) -> bool:
         """
-        Transfer KV cache from prefill to decode stage using global ranks
+        Transfer KV cache from prefill to decode stage using global ranks (single-stream)
         
         Args:
             request_id: Request ID
@@ -91,6 +91,80 @@ class KVTransferManager:
             )
         else:
             return False
+    
+    async def transfer_kv_cache_async(
+        self,
+        request_id: str,
+        src_rank: int,
+        dst_rank: int,
+        src_blocks: List[int],
+        dst_blocks: List[int],
+    ) -> Dict[str, Any]:
+        """
+        🚀 TRUE ASYNC: Start transfer and return immediately (non-blocking)
+        
+        This method initiates transfer on comm_stream and returns ObjectRef
+        without waiting. The caller decides when to wait for completion.
+        
+        Args:
+            request_id: Request ID
+            src_rank: Source worker's global NCCL rank
+            dst_rank: Destination worker's global NCCL rank
+            src_blocks: Source block IDs
+            dst_blocks: Destination block IDs
+            
+        Returns:
+            Dict with transfer handle:
+            {
+                "success": bool,
+                "transfer_ref": ray.ObjectRef,  # Future to wait on
+                "dst_worker": ray.ActorHandle,  # For sync_comm_stream()
+                "dst_rank": int,
+                "start_time": float,            # For timing
+                "num_blocks": int,              # For stats
+                "error": str (if failed)
+            }
+        """
+        try:
+            start_time = time.perf_counter()
+            
+            # Get worker references
+            src_worker = self.worker_registry.get(src_rank)
+            dst_worker = self.worker_registry.get(dst_rank)
+            
+            if src_worker is None or dst_worker is None:
+                log_error(f"[KVTransfer] Worker not found (src_rank={src_rank}, dst_rank={dst_rank})")
+                return {"success": False, "error": "Worker not found"}
+            
+            # ✅ Start async transfer - DO NOT AWAIT!
+            # This returns immediately, allowing other work to proceed
+            transfer_ref = dst_worker.p2p_transfer_kv_async.remote(
+                src_worker,
+                src_rank,
+                src_blocks,
+                dst_blocks,
+                timeout=10.0
+            )
+            
+            log_debug(f"[KVTransfer] 🚀 Started non-blocking transfer for {request_id} "
+                     f"({len(src_blocks)} blocks)")
+            
+            # ✅ Return ObjectRef immediately - caller decides when to wait
+            return {
+                "success": True,
+                "transfer_ref": transfer_ref,    # Ray ObjectRef (future)
+                "dst_worker": dst_worker,         # Needed for sync_comm_stream()
+                "dst_rank": dst_rank,
+                "start_time": start_time,
+                "num_blocks": len(src_blocks),
+                "request_id": request_id,         # For tracking
+            }
+            
+        except Exception as e:
+            log_error(f"[KVTransfer] Failed to start async transfer for {request_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
     
     async def _transfer_via_nccl_p2p(
         self,

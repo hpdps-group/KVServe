@@ -32,7 +32,7 @@ from kvserve.engine.utils import (
     BatchedRequests,
     StepOutput,
 )
-from kvserve.engine.logger import log_error
+from kvserve.engine.logger import log_error, log_info, log_debug, log_warning
 
 
 @ray.remote(num_cpus=0, num_gpus=1)
@@ -99,9 +99,17 @@ class Worker:
         self.cache_engine = None
         
         # GPU info
-        self.gpu_id = ray.get_gpu_ids()[0]
-        self.device = torch.device(f"cuda:0")
+        # Ray manages GPU allocation through CUDA_VISIBLE_DEVICES
+        # When Ray assigns a GPU, it sets CUDA_VISIBLE_DEVICES for that worker
+        # So we always use cuda:0 in the worker process (the only visible GPU)
+        self.device = torch.device("cuda:0")
         torch.cuda.set_device(self.device)
+        
+        # CUDA Streams for multi-stream optimization
+        self.compute_stream = torch.cuda.current_stream()  # Default stream for compute
+        self.comm_stream = None  # Communication stream (initialized on demand)
+        self.comm_event = None  # Event for stream synchronization (initialized with comm_stream)
+        self.transfer_events: Dict[str, torch.cuda.Event] = {}  # {request_id: event}
         
         # Statistics
         self.execution_time = 0.0
@@ -249,7 +257,7 @@ class Worker:
         reserved_memory = torch.cuda.memory_reserved(0)
         free_memory = total_memory - reserved_memory
         
-        buffer_memory = 5.0 * GB
+        buffer_memory = 2.0 * GB  # Balanced buffer for safety
         available_memory = max(0, free_memory - buffer_memory)
         kv_cache_memory = available_memory * self.gpu_memory_utilization
         
@@ -271,10 +279,29 @@ class Worker:
         num_gpu_blocks = int(kv_cache_memory / block_size_bytes)
         num_cpu_blocks = max(100, num_gpu_blocks // 10)
         
+        # ✅ Detailed logging for debugging
+        log_info(f"[Worker {self.worker_id}] GPU Memory Profile:")
+        log_info(f"  Total: {total_memory / GB:.2f} GB")
+        log_info(f"  Reserved: {reserved_memory / GB:.2f} GB (model + overhead)")
+        log_info(f"  Free: {free_memory / GB:.2f} GB")
+        log_info(f"  Buffer: {buffer_memory / GB:.2f} GB")
+        log_info(f"  Available: {available_memory / GB:.2f} GB")
+        log_info(f"  KV Cache: {kv_cache_memory / GB:.2f} GB (after utilization {self.gpu_memory_utilization})")
+        log_info(f"  Block size: {block_size_bytes / 1024:.2f} KB")
+        log_info(f"  → GPU blocks: {num_gpu_blocks}, CPU blocks: {num_cpu_blocks}")
+        
         return {
             'num_gpu_blocks': num_gpu_blocks,
             'num_cpu_blocks': num_cpu_blocks
         }
+    
+    def init_comm_stream(self):
+        """Initialize communication stream for multi-stream optimization"""
+        if self.comm_stream is None:
+            self.comm_stream = torch.cuda.Stream()
+            self.comm_event = torch.cuda.Event()
+            log_info(f"[Worker {self.worker_id}] Created communication stream and event for async KV transfer")
+        return self.comm_stream
     
     def init_kvcache(self, num_gpu_blocks: int, num_cpu_blocks: int) -> List[int]:
         """
@@ -680,6 +707,146 @@ class Worker:
             import traceback
             traceback.print_exc()
             return {"error": error_msg, "bytes": 0, "blocks": 0}
+    
+    def p2p_transfer_kv_async(
+        self,
+        src_worker_ref: Any,
+        src_rank: int,
+        src_blocks: List[int],
+        dst_blocks: List[int],
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        🚀 MULTI-STREAM: Async KV transfer on communication stream
+        
+        This method performs transfer on a separate comm_stream, allowing
+        compute operations to continue on the default stream concurrently.
+        
+        Args:
+            src_worker_ref: Ray actor handle to source worker
+            src_rank: NCCL rank of source worker
+            src_blocks: Block indices to send from source
+            dst_blocks: Block indices to write to in destination
+            timeout: Transfer timeout in seconds
+            
+        Returns:
+            Dict with transfer statistics and CUDA event for synchronization
+        """
+        import time
+        
+        if not self.nccl_pg_initialized:
+            return {"error": "NCCL not initialized", "bytes": 0, "blocks": 0}
+        
+        if len(src_blocks) != len(dst_blocks):
+            return {"error": f"Block count mismatch", "bytes": 0, "blocks": 0}
+        
+        if len(src_blocks) == 0:
+            return {"bytes": 0, "blocks": 0, "event": None}
+        
+        # Initialize comm stream if not already done
+        if self.comm_stream is None:
+            self.init_comm_stream()
+        
+        start_time = time.time()
+        
+        try:
+            # ✅ Execute transfer on communication stream
+            with torch.cuda.stream(self.comm_stream):
+                # STEP 1: Trigger send on source worker
+                send_future = src_worker_ref.p2p_send_kv_on_stream.remote(
+                    torch.distributed.get_rank(),
+                    src_blocks
+                )
+                
+                # STEP 2: Receive data
+                block_idx_tensor = torch.tensor(dst_blocks, dtype=torch.long, device=self.device)
+                
+                num_kv = 2
+                num_blocks = len(dst_blocks)
+                block_size = self.kv_cache[0].shape[2]
+                num_heads = self.kv_cache[0].shape[3]
+                head_size = self.kv_cache[0].shape[4]
+                kv_dtype = self.kv_cache[0].dtype
+                
+                layer_shape = (num_kv, num_blocks, block_size, num_heads, head_size)
+                total_bytes = 0
+                
+                # Receive layer by layer
+                for layer_idx, layer_kv in enumerate(self.kv_cache):
+                    layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
+                    torch.distributed.recv(layer_data, src=src_rank)
+                    layer_kv[:, block_idx_tensor, :, :, :] = layer_data
+                    total_bytes += layer_data.numel() * layer_data.element_size()
+                
+                # Record event (marks transfer completion point)
+                self.comm_event.record(self.comm_stream)
+            
+            # ⚠️ IMPORTANT: Do NOT synchronize here - let scheduler decide when to sync
+            # Transfer runs asynchronously on comm_stream
+            # Will be synchronized in sync_comm_stream() before compute
+            
+            # Wait for send to complete
+            send_result = ray.get(send_future)
+            
+            elapsed = time.time() - start_time
+            
+            if "error" in send_result:
+                return {"error": f"Send failed: {send_result['error']}", "bytes": 0, "blocks": 0}
+            
+            return {
+                "bytes": total_bytes,
+                "blocks": len(dst_blocks),
+                "elapsed": elapsed,
+                "transfer_complete": False,  # Async transfer, needs sync later
+            }
+            
+        except Exception as e:
+            error_msg = f"Async transfer failed: {type(e).__name__}: {str(e)}"
+            log_error(f"[Worker] {error_msg}")
+            return {"error": error_msg, "bytes": 0, "blocks": 0}
+    
+    def sync_comm_stream(self) -> Dict[str, Any]:
+        """
+        🔄 Synchronize communication stream with compute stream
+        Call this before compute to ensure KV transfer is complete
+        """
+        if self.comm_stream is None or self.comm_event is None:
+            return {"synced": True, "elapsed": 0.0}
+        
+        import time
+        start = time.time()
+        
+        # Make default stream wait for comm_stream
+        self.comm_event.synchronize()
+        
+        elapsed = time.time() - start
+        log_debug(f"[Worker {self.worker_id}] Synced comm_stream (waited {elapsed*1000:.2f}ms)")
+        
+        return {"synced": True, "elapsed": elapsed}
+    
+    def p2p_send_kv_on_stream(self, dst_rank: int, block_indices: List[int]) -> Dict[str, Any]:
+        """Send KV cache blocks on communication stream"""
+        if not self.nccl_pg_initialized:
+            return {"error": "NCCL not initialized"}
+        
+        # Initialize comm stream if needed
+        if self.comm_stream is None:
+            self.init_comm_stream()
+        
+        try:
+            with torch.cuda.stream(self.comm_stream):
+                block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
+                
+                total_bytes = 0
+                for layer_idx, layer_kv in enumerate(self.kv_cache):
+                    layer_data = layer_kv[:, block_idx_tensor, :, :, :].contiguous()
+                    torch.distributed.send(layer_data, dst=dst_rank)
+                    total_bytes += layer_data.numel() * layer_data.element_size()
+            
+            return {"bytes": total_bytes, "blocks": len(block_indices)}
+            
+        except Exception as e:
+            return {"error": str(e)}
     
     def get_global_rank(self) -> int:
         """Get global NCCL rank"""

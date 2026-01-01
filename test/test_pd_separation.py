@@ -25,11 +25,18 @@ async def test_pd_separation():
     # Initialize Ray
     if not ray.is_initialized():
         print("\n[1] Initializing Ray...")
-        # Set PYTHONPATH so Ray workers can find kvserve module
+        # Set PYTHONPATH so Ray workers can find kvserve module and correct vLLM version
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        vllm_path = "/root/lzd/vllm-0.10.1"  # Use vLLM 0.10.1
         env_pythonpath = os.environ.get("PYTHONPATH", "")
-        if project_root not in env_pythonpath:
-            os.environ["PYTHONPATH"] = project_root + (":" + env_pythonpath if env_pythonpath else "")
+        
+        # Build PYTHONPATH: vllm-0.10.1 first, then project root
+        pythonpath_parts = [vllm_path, project_root]
+        if env_pythonpath:
+            pythonpath_parts.append(env_pythonpath)
+        os.environ["PYTHONPATH"] = ":".join(pythonpath_parts)
+        
+        print(f"  Using vLLM from: {vllm_path}")
         
         ray.init(
             ignore_reinit_error=True,
@@ -51,8 +58,10 @@ async def test_pd_separation():
         model_path=model_path,
         num_prefill_workers=1,
         num_decoding_workers=1,
+        enable_multi_stream=True,
         block_size=16,
-        max_num_gpu_blocks=3000,
+        # max_num_gpu_blocks: Auto-profiled ✅
+        # max_num_cpu_blocks: Auto-profiled ✅
         dtype="float16",
         gpu_memory_utilization=0.85,
         kv_transfer_method="nccl",

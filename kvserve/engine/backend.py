@@ -10,7 +10,7 @@ from collections import deque
 from kvserve.engine.utils import Request, StepOutput
 from kvserve.engine.stage_engine import PrefillEngine, DecodeEngine
 from kvserve.engine.kv_transfer import KVTransferManager, TransferMethod
-from kvserve.engine.logger import LogLevel, set_log_level, log_info
+from kvserve.engine.logger import LogLevel, set_log_level, log_info, log_warning
 
 
 class PDBackend:
@@ -34,6 +34,7 @@ class PDBackend:
         log_level: str = "WARNING",
         max_model_len: int = 32768,
         max_batch_size: int = 32,
+        enable_multi_stream: bool = False,  # 🚀 Multi-stream optimization
     ):
         """
         Initialize PD Backend
@@ -51,6 +52,7 @@ class PDBackend:
             kv_transfer_method: KV transfer method ('nccl' or 'p2p_copy')
             nccl_init_method: NCCL initialization method
             log_level: Log level ('ERROR', 'WARNING', 'INFO', 'DEBUG')
+            enable_multi_stream: Enable multi-stream optimization (communication and compute overlap)
         """
         # Set log level
         try:
@@ -82,6 +84,7 @@ class PDBackend:
         # Engine configuration
         self.max_model_len = max_model_len
         self.max_batch_size = max_batch_size
+        self.enable_multi_stream = enable_multi_stream
         self.engine_config = {
             'model_path': model_path,
             'block_size': block_size,
@@ -95,6 +98,9 @@ class PDBackend:
             'nccl_world_size': self.nccl_world_size,
             'max_model_len': max_model_len,
         }
+        
+        if enable_multi_stream:
+            log_info("[PDBackend] 🚀 Multi-stream optimization ENABLED")
         
         # Stage engines
         self.prefill_engine: Optional[PrefillEngine] = None
@@ -114,6 +120,16 @@ class PDBackend:
         """Initialize all stage engines"""
         log_info("[PDBackend] Initializing engines...")
         
+        # Check GPU availability
+        import torch
+        num_gpus_available = torch.cuda.device_count()
+        num_gpus_needed = self.num_prefill_workers + self.num_decoding_workers
+        log_info(f"[PDBackend] GPU check: {num_gpus_available} available, {num_gpus_needed} needed")
+        
+        if num_gpus_available < num_gpus_needed:
+            log_warning(f"[PDBackend] ⚠️  Insufficient GPUs! Have {num_gpus_available}, need {num_gpus_needed}")
+            log_warning(f"[PDBackend] Workers will share GPUs (may cause OOM)")
+        
         # Create prefill engine
         self.prefill_engine = PrefillEngine(
             prefill_decode_bridge_queue=self.prefill_decode_bridge_queue,
@@ -127,6 +143,7 @@ class PDBackend:
             prefill_decode_bridge_queue=self.prefill_decode_bridge_queue,
             num_workers=self.num_decoding_workers,
             max_batch_size=self.max_batch_size,
+            enable_multi_stream=self.enable_multi_stream,  # 🚀 Pass multi-stream flag
             **self.engine_config
         )
         

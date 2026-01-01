@@ -3,9 +3,10 @@ Utility classes and functions for PD separation engine
 """
 
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import time
+import asyncio
 
 
 class EngineStage(Enum):
@@ -20,6 +21,15 @@ class EngineStatus(Enum):
     ACTIVE = "active"
     MIGRATING = "migrating"
     ERROR = "error"
+
+
+class KVTransferStatus(Enum):
+    """KV cache transfer status for multi-stream optimization"""
+    NOT_STARTED = "not_started"      # Not yet started (in prefill stage)
+    PENDING = "pending"              # Waiting to transfer
+    TRANSFERRING = "transferring"   # Transfer in progress
+    READY = "ready"                  # Transfer complete, ready for compute
+    FAILED = "failed"                # Transfer failed
 
 
 @dataclass
@@ -51,11 +61,29 @@ class Request:
     total_decode_compute_time: float = 0.0
     kv_transfer_time: Optional[float] = None
     
+    # Multi-stream KV transfer (for async transfer optimization)
+    kv_transfer_status: KVTransferStatus = field(default=KVTransferStatus.NOT_STARTED)
+    kv_transfer_task: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)  # Async transfer task (not serializable)
+    kv_transfer_complete: bool = False  # Whether transfer is complete (synced in worker)
+    kv_transfer_retry_count: int = 0  # Transfer retry counter
+    assigned_worker_rank: Optional[int] = None  # Assigned decode worker rank
+    
     def __post_init__(self):
         if self.output_token_ids is None:
             self.output_token_ids = []
         if self.arrival_time is None:
             self.arrival_time = time.time()
+    
+    def __getstate__(self):
+        """Custom serialization: exclude non-serializable fields"""
+        state = self.__dict__.copy()
+        # Remove asyncio.Task which cannot be pickled
+        state['kv_transfer_task'] = None
+        return state
+    
+    def __setstate__(self, state):
+        """Custom deserialization"""
+        self.__dict__.update(state)
     
     def get_input_len(self) -> int:
         """Get input sequence length"""
