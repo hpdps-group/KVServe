@@ -5,7 +5,7 @@ Implements Prefill and Decoding stages
 
 import asyncio
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from collections import deque
 
 import ray
@@ -138,10 +138,12 @@ class BaseStageEngine:
         dtype: str = "float16",
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.9,
+        activation_memory_gb: Optional[float] = None,
         kv_transfer_manager: Optional[KVTransferManager] = None,
         nccl_init_method: Optional[str] = None,
         nccl_world_size: Optional[int] = None,
         max_model_len: int = 32768,
+        compression_config: Optional[Dict[str, Any]] = None,
     ):
         self.stage = stage
         self.model_path = model_path
@@ -152,10 +154,12 @@ class BaseStageEngine:
         self.dtype = dtype
         self.tensor_parallel_size = tensor_parallel_size
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.activation_memory_gb = activation_memory_gb
         self.kv_transfer_manager = kv_transfer_manager
         self.nccl_init_method = nccl_init_method
         self.nccl_world_size = nccl_world_size
         self.max_model_len = max_model_len
+        self.compression_config = compression_config
         
         # Workers
         self.workers: List[ray.ObjectRef] = []
@@ -211,10 +215,12 @@ class BaseStageEngine:
                 dtype=self.dtype,
                 tensor_parallel_size=self.tensor_parallel_size,
                 gpu_memory_utilization=self.gpu_memory_utilization,
+                activation_memory_gb=self.activation_memory_gb,
                 global_rank=global_rank,
                 world_size=self.nccl_world_size,
                 nccl_init_method=self.nccl_init_method,
                 max_model_len=self.max_model_len,
+                compression_config=self.compression_config,
             )
             
             self.workers.append(worker)
@@ -298,7 +304,13 @@ class BaseStageEngine:
         """Stop the event loop"""
         log_info(f"[{self.stage.value}Engine] Stopping event loop...")
         self.pls_stop_loop.set()
-        await asyncio.wait_for(self.is_loop_stopped.wait(), timeout=5.0)
+        
+        try:
+            await asyncio.wait_for(self.is_loop_stopped.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            # Event loop didn't stop gracefully, but that's okay
+            # This can happen if the loop never started or crashed early
+            log_warning(f"[{self.stage.value}Engine] Event loop stop timeout (may not have been running)")
     
     async def step(self):
         """Execute one step - to be implemented by subclasses"""

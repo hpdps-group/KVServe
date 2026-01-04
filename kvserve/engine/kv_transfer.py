@@ -192,13 +192,28 @@ class KVTransferManager:
             
             # ✅ OPTIMIZED: Use coordinated transfer (single remote call)
             # This is more efficient than separate send/recv calls
-            recv_result = await dst_worker.p2p_coordinated_transfer_kv.remote(
-                src_worker,    # Pass src worker reference
-                src_rank,      # NCCL rank of source
-                src_blocks,    # Blocks to send from source
-                dst_blocks,    # Blocks to write in destination
-                timeout=10.0   # 10s timeout for safety
-            )
+            # Check if compression is enabled on source worker
+            has_compression = await src_worker.compression_manager_is_enabled.remote()
+            
+            if has_compression:
+                # Use compressed transfer
+                recv_result = await dst_worker.p2p_coordinated_transfer_kv_compressed.remote(
+                    src_worker,    # Pass src worker reference
+                    src_rank,      # NCCL rank of source
+                    src_blocks,    # Blocks to send from source
+                    dst_blocks,    # Blocks to write in destination
+                    request_id,    # Request ID for compression tracking
+                    timeout=10.0   # 10s timeout for safety
+                )
+            else:
+                # Use regular transfer
+                recv_result = await dst_worker.p2p_coordinated_transfer_kv.remote(
+                    src_worker,    # Pass src worker reference
+                    src_rank,      # NCCL rank of source
+                    src_blocks,    # Blocks to send from source
+                    dst_blocks,    # Blocks to write in destination
+                    timeout=10.0   # 10s timeout for safety
+                )
             
             elapsed = time.perf_counter() - start_time
             

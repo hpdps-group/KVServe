@@ -102,9 +102,10 @@ def dequantize(
     # Step 1: Extract metadata
     min_val = meta_data["min_val"]
     quant_scale = meta_data["quant_scale"]
+    original_dtype = meta_data.get("original_dtype", torch.float16)
 
-    # Step 2: Type conversion (cast to float)
-    quant_float = quantized_tensor.to(meta_data["quant_dtype"])
+    # Step 2: Type conversion (cast to original dtype for calculation)
+    quant_float = quantized_tensor.to(original_dtype)
 
     # Step 3: Dequantization calculation
     # Formula: result = quantized * scale + min_value

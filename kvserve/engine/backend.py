@@ -4,7 +4,7 @@ Coordinates Prefill and Decode stages
 """
 
 import asyncio
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from collections import deque
 
 from kvserve.engine.utils import Request, StepOutput
@@ -29,12 +29,14 @@ class PDBackend:
         dtype: str = "float16",
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.9,
+        activation_memory_gb: Optional[float] = None,
         kv_transfer_method: str = "nccl",
         nccl_init_method: str = "tcp://localhost:29500",
         log_level: str = "WARNING",
         max_model_len: int = 32768,
         max_batch_size: int = 32,
         enable_multi_stream: bool = False,  # 🚀 Multi-stream optimization
+        compression_config: Optional[Dict[str, Any]] = None,  # KV compression configuration
     ):
         """
         Initialize PD Backend
@@ -53,7 +55,9 @@ class PDBackend:
             nccl_init_method: NCCL initialization method
             log_level: Log level ('ERROR', 'WARNING', 'INFO', 'DEBUG')
             enable_multi_stream: Enable multi-stream optimization (communication and compute overlap)
+            compression_config: KV compression configuration (optional)
         """
+        self.compression_config = compression_config
         # Set log level
         try:
             level = LogLevel[log_level.upper()]
@@ -93,10 +97,12 @@ class PDBackend:
             'dtype': dtype,
             'tensor_parallel_size': tensor_parallel_size,
             'gpu_memory_utilization': gpu_memory_utilization,
+            'activation_memory_gb': activation_memory_gb,
             'kv_transfer_manager': self.kv_transfer_manager,
             'nccl_init_method': nccl_init_method,
             'nccl_world_size': self.nccl_world_size,
             'max_model_len': max_model_len,
+            'compression_config': compression_config,
         }
         
         if enable_multi_stream:

@@ -53,10 +53,13 @@ class Worker:
         seed: int = 1024,
         max_model_len: int = 32768,
         gpu_memory_utilization: float = 0.9,
+        activation_memory_gb: Optional[float] = None,
         # Global NCCL parameters (for P2P KV transfer)
         global_rank: Optional[int] = None,
         world_size: Optional[int] = None,
         nccl_init_method: Optional[str] = None,
+        # KV compression parameters
+        compression_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize worker
@@ -74,6 +77,7 @@ class Worker:
             global_rank: Global NCCL rank
             world_size: NCCL world size
             nccl_init_method: NCCL init method (e.g., "tcp://localhost:29500")
+            compression_config: KV compression configuration (optional)
         """
         self.worker_id = worker_id
         self.stage = stage
@@ -84,6 +88,7 @@ class Worker:
         self.seed = seed
         self.max_model_len = max_model_len
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.activation_memory_gb = activation_memory_gb
         
         # Global NCCL for P2P transfer
         self.global_rank = global_rank
@@ -97,6 +102,12 @@ class Worker:
         # KV cache tensors
         self.kv_cache = None
         self.cache_engine = None
+        
+        # KV compression
+        self.compression_manager = None
+        self.compression_config = compression_config
+        if compression_config and compression_config.get("enabled", False):
+            self._init_compression_manager()
         
         # GPU info
         # Ray manages GPU allocation through CUDA_VISIBLE_DEVICES
@@ -117,9 +128,48 @@ class Worker:
         # Track decode steps
         self._decode_steps = {}
     
+    def _init_compression_manager(self):
+        """Initialize compression manager with configured pipeline"""
+        try:
+            from kvserve.manager.compression_manager import CompressionManager, CompressionConfig
+            from kvserve.transformer import KVServeTransformer
+            from kvserve.quantizer import KVServeQuantizer
+            from kvserve.codec import KVServeCodec
+            
+            # Create compression config
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
+            
+            # Instantiate components based on pipeline
+            transformer = KVServeTransformer if "transformer" in config.pipeline else None
+            quantizer = KVServeQuantizer if "quantizer" in config.pipeline else None
+            codec = KVServeCodec if "codec" in config.pipeline else None
+            
+            self.compression_manager = CompressionManager(
+                config=config,
+                transformer=transformer,
+                quantizer=quantizer,
+                codec=codec,
+            )
+            
+            log_info(f"[Worker-{self.worker_id}] Compression manager initialized with pipeline: {config.pipeline}")
+        except Exception as e:
+            log_error(f"[Worker-{self.worker_id}] Failed to initialize compression manager: {e}")
+            self.compression_manager = None
+    
     def ready(self):
         """Check if worker is ready"""
         return True
+    
+    def compression_manager_is_enabled(self) -> bool:
+        """Check if compression manager is enabled"""
+        return self.compression_manager is not None and self.compression_config and self.compression_config.get("enabled", False)
     
     def get_stage(self) -> EngineStage:
         """Get current stage"""
@@ -247,6 +297,19 @@ class Worker:
     def profile_num_available_blocks(self) -> Dict[str, int]:
         """
         Profile GPU memory after model loading to determine available KV cache blocks
+        
+        ✅ CRITICAL FIX: Reserve memory for activation peaks
+        
+        The ROOT CAUSE of OOM:
+        - Old strategy allocated KV cache based on *free memory* after model load
+        - This didn't account for dynamic activation allocation during inference
+        - Result: KV cache took ~12GB, leaving only ~1GB for activations (need ~5-6GB)
+        
+        New strategy:
+        - Estimate peak activation memory needs (based on batch_size, max_seq_len)
+        - Reserve this activation memory FIRST
+        - Allocate remaining budget to KV cache
+        - Formula: KV_cache = (TotalBudget - Model - EstimatedActivation)
         """
         from kvserve.engine.utils import GB
         
@@ -257,11 +320,28 @@ class Worker:
         reserved_memory = torch.cuda.memory_reserved(0)
         free_memory = total_memory - reserved_memory
         
-        buffer_memory = 2.0 * GB  # Balanced buffer for safety
-        available_memory = max(0, free_memory - buffer_memory)
-        kv_cache_memory = available_memory * self.gpu_memory_utilization
+        # Step 1: Determine activation reserve from two knobs
+        #   A) gpu_memory_utilization -> activation_from_util = total * (1 - util)
+        #   B) activation_memory_gb (explicit) -> activation_from_user
+        activation_from_util = total_memory * (1 - self.gpu_memory_utilization)
+        activation_from_user = self.activation_memory_gb * GB if self.activation_memory_gb is not None else None
         
-        max_kv_cache = total_memory * 0.70
+        if activation_from_user is not None:
+            activation_required = max(activation_from_util, activation_from_user)
+            activation_source = "max(user, util)"
+        else:
+            activation_required = activation_from_util
+            activation_source = "util"
+        
+        # Step 2: Budget left for (Model + KV)
+        model_memory = reserved_memory
+        budget_for_model_kv = max(0, total_memory - activation_required)
+        
+        # Step 3: KV cache = budget_for_model_kv - model
+        kv_cache_memory = max(0, 0.9*(budget_for_model_kv - model_memory))
+        
+        # Safety cap: never exceed 50% of total memory for KV cache
+        max_kv_cache = total_memory * 0.50
         kv_cache_memory = min(kv_cache_memory, max_kv_cache)
         
         # Calculate size of one KV cache block
@@ -282,11 +362,15 @@ class Worker:
         # ✅ Detailed logging for debugging
         log_info(f"[Worker {self.worker_id}] GPU Memory Profile:")
         log_info(f"  Total: {total_memory / GB:.2f} GB")
-        log_info(f"  Reserved: {reserved_memory / GB:.2f} GB (model + overhead)")
-        log_info(f"  Free: {free_memory / GB:.2f} GB")
-        log_info(f"  Buffer: {buffer_memory / GB:.2f} GB")
-        log_info(f"  Available: {available_memory / GB:.2f} GB")
-        log_info(f"  KV Cache: {kv_cache_memory / GB:.2f} GB (after utilization {self.gpu_memory_utilization})")
+        log_info(f"  Model + Overhead: {model_memory / GB:.2f} GB")
+        log_info(f"  Free after model: {free_memory / GB:.2f} GB")
+        log_info(f"  Activation Source: {activation_source}")
+        log_info(f"  Activation Reserved (util): {activation_from_util / GB:.2f} GB")
+        if activation_from_user is not None:
+            log_info(f"  Activation User: {activation_from_user / GB:.2f} GB")
+        log_info(f"  Activation Used: {activation_required / GB:.2f} GB")
+        log_info(f"  Budget for Model+KV: {budget_for_model_kv / GB:.2f} GB")
+        log_info(f"  KV Cache Allocation: {kv_cache_memory / GB:.2f} GB")
         log_info(f"  Block size: {block_size_bytes / 1024:.2f} KB")
         log_info(f"  → GPU blocks: {num_gpu_blocks}, CPU blocks: {num_cpu_blocks}")
         
@@ -544,12 +628,19 @@ class Worker:
         
         block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.kv_cache[0].device)
         
-        layer_kv_list = []
-        for layer_kv in self.kv_cache:
-            extracted_blocks = layer_kv[:, block_idx_tensor, :, :, :]
-            layer_kv_list.append(extracted_blocks)
+        # Extract first layer to determine output shape and dtype
+        first_layer_kv = self.kv_cache[0][:, block_idx_tensor, :, :, :]
+        num_layers = len(self.kv_cache)
+        output_shape = (num_layers,) + first_layer_kv.shape
         
-        kv_data = torch.stack(layer_kv_list, dim=0)
+        # Pre-allocate output tensor (avoids list accumulation + stack overhead)
+        kv_data = torch.empty(output_shape, dtype=first_layer_kv.dtype, device=first_layer_kv.device)
+        kv_data[0] = first_layer_kv
+        
+        # Fill remaining layers in-place
+        for layer_idx in range(1, num_layers):
+            kv_data[layer_idx] = self.kv_cache[layer_idx][:, block_idx_tensor, :, :, :]
+        
         return kv_data
     
     def write_kv_blocks(self, block_indices: List[int], kv_data: torch.Tensor):
@@ -703,6 +794,280 @@ class Worker:
             
         except Exception as e:
             error_msg = f"Coordinated transfer failed: {type(e).__name__}: {str(e)}"
+            log_error(f"[Worker] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {"error": error_msg, "bytes": 0, "blocks": 0}
+    
+    def p2p_send_kv_compressed(
+        self,
+        dst_rank: int,
+        block_indices: List[int],
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Send KV cache blocks with compression (all layers together)
+        
+        Args:
+            dst_rank: Destination NCCL rank
+            block_indices: Block indices to send
+            request_id: Request ID for tracking
+            
+        Returns:
+            Dict with transfer statistics
+        """
+        if not self.nccl_pg_initialized:
+            return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
+        
+        if self.compression_manager is None:
+            return {"error": "Compression manager not initialized", "bytes": 0, "blocks": 0}
+        
+        try:
+            # Extract all layers KV data
+            kv_data = self.extract_kv_blocks(block_indices)  # [num_layers, 2, num_blocks, ...]
+            
+            # Compress all layers together using optimized fast path
+            compressed_data = self.compression_manager.compress_all_layers(
+                all_layers_data=kv_data,
+                request_id=request_id,
+                metadata={"block_indices": block_indices},
+            )
+            
+            # [MEMORY FIX] Immediately release original KV data after compression
+            del kv_data
+            torch.cuda.empty_cache()
+            
+            if compressed_data is None:
+                # Compression failed or disabled, fallback to uncompressed
+                log_warning(f"[Worker-{self.worker_id}] Compression failed, fallback to uncompressed transfer")
+                return self.p2p_send_kv(dst_rank, block_indices)
+            
+            # Prepare metadata for transfer
+            # Add compressed_size (payload only) to metadata for receiver
+            payload_size = len(compressed_data.compressed_bytes)
+            compressed_data.compressed_size = payload_size
+            compressed_data.metadata["compressed_size"] = payload_size
+            
+            # Send: [metadata_size (int64), metadata_bytes, compressed_bytes]
+            import pickle
+            metadata_bytes = pickle.dumps(compressed_data.metadata)
+            metadata_size = len(metadata_bytes)
+            
+            # Send metadata size first (8 bytes, int64)
+            metadata_size_tensor = torch.tensor([metadata_size], dtype=torch.int64, device=self.device)
+            torch.distributed.send(metadata_size_tensor, dst=dst_rank)
+            
+            # Send metadata
+            metadata_tensor = torch.frombuffer(
+                metadata_bytes, dtype=torch.uint8
+            ).to(self.device)
+            torch.distributed.send(metadata_tensor, dst=dst_rank)
+            
+            # Send compressed data
+            compressed_size = len(compressed_data.compressed_bytes)
+            compressed_tensor = torch.frombuffer(
+                compressed_data.compressed_bytes, dtype=torch.uint8
+            ).to(self.device)
+            torch.distributed.send(compressed_tensor, dst=dst_rank)
+            
+            # [MEMORY FIX] Release tensors after send
+            del metadata_size_tensor
+            del metadata_tensor
+            del compressed_tensor
+            
+            torch.cuda.synchronize()
+            
+            total_bytes_sent = 8 + metadata_size + compressed_size
+            compression_ratio = compressed_data.original_size / compressed_data.compressed_size
+            
+            log_info(f"[Worker-{self.worker_id}] Compressed send: {compressed_data.original_size} -> {compressed_data.compressed_size} bytes (ratio: {compression_ratio:.2f}x)")
+            
+            return {
+                "bytes": total_bytes_sent,
+                "blocks": len(block_indices),
+                "original_size": compressed_data.original_size,
+                "compressed_size": compressed_data.compressed_size,
+                "compression_ratio": compression_ratio,
+            }
+        
+        except Exception as e:
+            error_msg = f"Compressed NCCL send failed: {type(e).__name__}: {str(e)}"
+            log_error(f"[Worker-{self.worker_id}] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {"error": error_msg, "bytes": 0, "blocks": 0}
+    
+    def p2p_recv_kv_compressed(
+        self,
+        src_rank: int,
+        block_indices: List[int],
+    ) -> Dict[str, Any]:
+        """
+        Receive KV cache blocks with decompression (all layers together)
+        
+        Args:
+            src_rank: Source NCCL rank
+            block_indices: Block indices to write to
+            
+        Returns:
+            Dict with transfer statistics
+        """
+        if not self.nccl_pg_initialized:
+            return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
+        
+        if self.compression_manager is None:
+            return {"error": "Compression manager not initialized", "bytes": 0, "blocks": 0}
+        
+        try:
+            # Receive metadata size (8 bytes, int64)
+            metadata_size_tensor = torch.empty(1, dtype=torch.int64, device=self.device)
+            torch.distributed.recv(metadata_size_tensor, src=src_rank)
+            metadata_size = metadata_size_tensor.item()
+            
+            # Receive metadata
+            metadata_tensor = torch.empty(metadata_size, dtype=torch.uint8, device=self.device)
+            torch.distributed.recv(metadata_tensor, src=src_rank)
+            metadata_bytes = metadata_tensor.cpu().numpy().tobytes()
+            
+            # [MEMORY FIX] Release tensor after use
+            del metadata_tensor
+            
+            import pickle
+            metadata = pickle.loads(metadata_bytes)
+            
+            # Infer compressed size from metadata
+            compressed_size = metadata.get("compressed_size")
+            if compressed_size is None:
+                error_msg = "compressed_size not in metadata"
+                log_error(f"[Worker-{self.worker_id}] {error_msg}")
+                return {"error": error_msg, "bytes": 0, "blocks": 0}
+            
+            # Receive compressed data
+            compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
+            torch.distributed.recv(compressed_tensor, src=src_rank)
+            compressed_bytes = compressed_tensor.cpu().numpy().tobytes()
+            
+            # [MEMORY FIX] Release tensor after use
+            del compressed_tensor
+            
+            torch.cuda.synchronize()
+            
+            # Reconstruct CompressedKVData
+            from kvserve.manager.compression_manager import CompressedKVData
+            num_layers = metadata.get("num_layers", len(self.kv_cache))
+            compressed_data = CompressedKVData(
+                request_id=metadata.get("request_id", "unknown"),
+                layer_id=num_layers - 1,  # layer_end_id
+                compressed_bytes=compressed_bytes,
+                metadata=metadata,
+                original_size=metadata.get("original_size", 0),
+                compressed_size=len(compressed_bytes),
+            )
+            
+            # Decompress all layers using the optimized fast path
+            kv_data = self.compression_manager.decompress_all_layers(compressed_data)
+            
+            # [MEMORY FIX] Release compressed_data after decompression
+            del compressed_data
+            
+            if kv_data is None:
+                error_msg = "Decompression failed"
+                log_error(f"[Worker-{self.worker_id}] {error_msg}")
+                return {"error": error_msg, "bytes": 0, "blocks": 0}
+            
+            # Write to KV cache
+            self.write_kv_blocks(block_indices, kv_data)
+            
+            # [MEMORY FIX] Release kv_data after writing to cache
+            del kv_data
+            torch.cuda.empty_cache()
+            
+            total_bytes_received = 8 + metadata_size + compressed_size
+            compression_ratio = metadata.get("original_size", 0) / compressed_size if compressed_size > 0 else 1.0
+            
+            return {
+                "bytes": total_bytes_received,
+                "blocks": len(block_indices),
+                "original_size": metadata.get("original_size", 0),
+                "compressed_size": compressed_size,
+                "compression_ratio": compression_ratio,
+            }
+        
+        except Exception as e:
+            error_msg = f"Compressed NCCL recv failed: {type(e).__name__}: {str(e)}"
+            log_error(f"[Worker-{self.worker_id}] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {"error": error_msg, "bytes": 0, "blocks": 0}
+    
+    def p2p_coordinated_transfer_kv_compressed(
+        self,
+        src_worker_ref: Any,
+        src_rank: int,
+        src_blocks: List[int],
+        dst_blocks: List[int],
+        request_id: str,
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Coordinated KV transfer with compression (all layers together)
+        
+        This method is called on the DESTINATION worker and coordinates with
+        the source worker to transfer compressed KV cache.
+        
+        Args:
+            src_worker_ref: Ray actor handle to source worker
+            src_rank: NCCL rank of source worker
+            src_blocks: Block indices to send from source
+            dst_blocks: Block indices to write to in destination
+            request_id: Request ID for tracking
+            timeout: Transfer timeout in seconds (default: 10s)
+            
+        Returns:
+            Dict with transfer statistics
+        """
+        import time
+        
+        if not self.nccl_pg_initialized:
+            return {"error": "Destination worker: Global NCCL not initialized", "bytes": 0, "blocks": 0}
+        
+        if len(src_blocks) != len(dst_blocks):
+            return {"error": f"Block count mismatch: src={len(src_blocks)}, dst={len(dst_blocks)}", "bytes": 0, "blocks": 0}
+        
+        if len(src_blocks) == 0:
+            return {"bytes": 0, "blocks": 0}
+        
+        start_time = time.time()
+        
+        try:
+            # ✅ STEP 1: Trigger compressed send on source worker
+            send_future = src_worker_ref.p2p_send_kv_compressed.remote(
+                torch.distributed.get_rank(),  # dst_rank = my rank
+                src_blocks,
+                request_id
+            )
+            
+            # ✅ STEP 2: Immediately start receiving compressed data
+            recv_result = self.p2p_recv_kv_compressed(src_rank, dst_blocks)
+            
+            if "error" in recv_result:
+                return recv_result
+            
+            # Wait for send to complete
+            send_result = ray.get(send_future)
+            
+            elapsed = time.time() - start_time
+            
+            if "error" in send_result:
+                return {"error": f"Send failed: {send_result['error']}", "bytes": 0, "blocks": 0}
+            
+            return {
+                **recv_result,
+                "elapsed": elapsed,
+            }
+            
+        except Exception as e:
+            error_msg = f"Coordinated compressed transfer failed: {type(e).__name__}: {str(e)}"
             log_error(f"[Worker] {error_msg}")
             import traceback
             traceback.print_exc()

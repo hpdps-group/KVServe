@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"path": "../../elasticmm_project"
+		},
+		{
+			"path": "../../torch2.7.1"
+		},
+		{
+			"path": "../../../.vscode-server/extensions/openai.chatgpt-0.4.46-linux-x64/bin/linux-x86_64"
+		},
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../../ssd/Llama3.1-8B-Instruct"
+		},
+		{
+			"path": "../../lm-evaluation-harness"
+		},
+		{
+			"path": "../../vllm-0.10.1"
+		}
+	],
+	"settings": {}
+}

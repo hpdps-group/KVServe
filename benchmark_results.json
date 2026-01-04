@@ -1,0 +1,36 @@
+[
+  {
+    "mode": "single-stream",
+    "num_requests": 100,
+    "total_time": 26.7050724029541,
+    "throughput": 3.7446069604716015,
+    "avg_latency": 15.674544986787733,
+    "p50_latency": 15.599104166030884,
+    "p90_latency": 25.435072422027588,
+    "p99_latency": 26.65649962425232,
+    "avg_prefill_time": 0.15358834266662597,
+    "avg_decode_time": 2.840129084639497,
+    "avg_kv_transfer_time": 0.013842246532440185,
+    "total_input_tokens": 400000,
+    "total_output_tokens": 9048,
+    "input_tokens_per_sec": 14978.427841886405,
+    "output_tokens_per_sec": 338.8120377834705
+  },
+  {
+    "mode": "multi-stream",
+    "num_requests": 100,
+    "total_time": 26.81323766708374,
+    "throughput": 3.7295011233485327,
+    "avg_latency": 15.60538027551439,
+    "p50_latency": 15.633503437042236,
+    "p90_latency": 26.499166250228882,
+    "p99_latency": 26.751129388809204,
+    "avg_prefill_time": 0.16282615661621094,
+    "avg_decode_time": 2.774033072259691,
+    "avg_kv_transfer_time": 0.008366267681121826,
+    "total_input_tokens": 400000,
+    "total_output_tokens": 9061,
+    "input_tokens_per_sec": 14918.004493394132,
+    "output_tokens_per_sec": 337.93009678661053
+  }
+]
