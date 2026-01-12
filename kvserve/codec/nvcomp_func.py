@@ -34,7 +34,7 @@ class nvCOMPCodec:
         self, 
         tensor: torch.Tensor, 
         **kwargs
-    ) -> bytes:
+    ) -> torch.Tensor:
         """
         Encode (compress) tensor to bytes using nvCOMP
         
@@ -46,82 +46,34 @@ class nvCOMPCodec:
             **kwargs: Additional encoding parameters
             
         Returns:
-            Compressed bytes representation of the tensor
+            Compressed tensor
         """
-        # Step 1: Flatten tensor and convert to uint8 view
-        tensor = tensor.flatten().view(torch.uint8).contiguous()
+        # Step 1: Reshape tensor and convert to uint8 view
+        flat_view = tensor.reshape(-1).view(torch.uint8)
+        if not flat_view.is_contiguous():
+            flat_view = flat_view.contiguous()
         
         # Boundary check: skip compression for very small tensors
-        if tensor.numel() == 0:
-            # Empty tensor, return empty bytes
-            return b""
-        
-        # Log tensor size for debugging large data issues
-        tensor_size_mb = tensor.numel() / (1024 * 1024)
-        # if tensor_size_mb > 200:  # Log if > 200 MB
-        #     print(f"[nvCOMP] Large tensor compression: {tensor_size_mb:.1f} MB, shape {list(tensor.shape)}")
+        if flat_view.numel() == 0:
+            return torch.empty(0, dtype=torch.uint8, device=tensor.device)
         
         # Step 2: Convert PyTorch tensor to nvCOMP array format
-        nv_array = nvcomp.as_array(tensor)
+        nv_array = nvcomp.as_array(flat_view)
         
         # Step 3: Compress using nvCOMP
         comp_buffer = self.codec.encode(nv_array)
-        
-        # [MEMORY FIX] Release nv_array after encoding
-        del nv_array
-        
-        # Step 4: Check if comp_buffer is valid (not scalar)
-        # Handle boundary cases where nvCOMP returns scalar or invalid format
-        try:
-            # Debug: log comp_buffer type for large tensors
-            # if tensor_size_mb > 200:
-            #     print(f"[nvCOMP] comp_buffer type: {type(comp_buffer)}, "
-            #           f"hasattr size: {hasattr(comp_buffer, 'size')}, "
-            #           f"hasattr shape: {hasattr(comp_buffer, 'shape')}")
-            #     if hasattr(comp_buffer, 'size'):
-            #         print(f"[nvCOMP] comp_buffer.size: {comp_buffer.size}")
-            #     if hasattr(comp_buffer, 'shape'):
-            #         print(f"[nvCOMP] comp_buffer.shape: {comp_buffer.shape}")
-            
-            # Check if comp_buffer is a Python scalar (int, float, etc.)
-            if isinstance(comp_buffer, (int, float, bool)):
-                # Scalar value, skip compression - return original tensor as bytes
-                print(f"[nvCOMP] SKIP: comp_buffer is Python scalar: {type(comp_buffer)}")
-                return tensor.cpu().numpy().tobytes()
-            
-            # Try to convert to CuPy array
-            comp_cupy = cp.asarray(comp_buffer)
-            
-            # Check if result is scalar (0-d array) or empty
-            if comp_cupy.ndim == 0 or comp_cupy.size <= 1:
-                # Scalar or single-element array, skip compression
-                print(f"[nvCOMP] SKIP: comp_cupy is scalar/empty, ndim={comp_cupy.ndim}, size={comp_cupy.size}")
-                return tensor.cpu().numpy().tobytes()
-            
-            # Normal case: convert to bytes
-            comp_bytes = comp_cupy.tobytes()
-            
-            # [MEMORY FIX] Release CuPy arrays
-            del comp_cupy
-            del comp_buffer
-            
-            # Log compression ratio for large tensors
-            # if tensor_size_mb > 200:
-            #     comp_size_mb = len(comp_bytes) / (1024 * 1024)
-            #     ratio = tensor_size_mb / comp_size_mb if comp_size_mb > 0 else 0
-            #     print(f"[nvCOMP] Compressed: {tensor_size_mb:.1f} MB -> {comp_size_mb:.1f} MB (ratio: {ratio:.2f}x)")
-            
-            return comp_bytes
-            
-        except (ValueError, TypeError) as e:
-            # Conversion failed (e.g., "cannot coerce scalar to array")
-            # Fallback: return original tensor as bytes (skip compression)
-            print(f"[nvCOMP] SKIP: Conversion failed: {type(e).__name__}: {e}")
-            return tensor.cpu().numpy().tobytes()
 
+        # Step 4: Convert nvCOMP buffer to PyTorch tensor
+        comp_tensor = torch.as_tensor(comp_buffer, dtype=torch.uint8, device=tensor.device)
+        
+        # Release intermediates immediately
+        del flat_view, nv_array, comp_buffer
+
+        return comp_tensor
+        
     def decode(
         self, 
-        compressed_data: bytes,
+        compressed_tensor: torch.Tensor,
         original_dtype: str,
         original_shape: list,
         device: str,
@@ -134,7 +86,7 @@ class nvCOMPCodec:
         original dtype and shape.
         
         Args:
-            compressed_data: Compressed bytes from encode()
+            compressed_tensor: Compressed tensor from encode()
             original_dtype: Original tensor dtype as string (e.g., "bfloat16", "float32")
             original_shape: Original tensor shape as list (e.g., [128, 32, 8, 128])
             device: Target device for decompressed tensor (e.g., "cuda:0", "cpu")
@@ -143,29 +95,28 @@ class nvCOMPCodec:
         Returns:
             Decompressed tensor with original dtype and shape restored
         """
-        # Step 1: Convert compressed bytes to CuPy array
-        comp_cupy = cp.frombuffer(compressed_data, dtype=cp.uint8)
+        if not compressed_tensor.is_contiguous():
+            compressed_tensor = compressed_tensor.contiguous()
         
-        # Step 2: Convert CuPy array to nvCOMP array format
-        comp_buffer = nvcomp.as_array(comp_cupy)
+        # Step 1: Convert to nvCOMP array format            
+        comp_buffer = nvcomp.as_array(compressed_tensor)
         
-        # [MEMORY FIX] Release CuPy array after conversion
-        del comp_cupy
-
-        # Step 3: Decompress using nvCOMP
+        # Step 2: Decompress using nvCOMP
         decomp_buffer = self.codec.decode(comp_buffer)
         
-        # [MEMORY FIX] Release comp_buffer after decompression
+        # Release input buffer wrapper
         del comp_buffer
         
-        # Step 4: Convert decompressed buffer to PyTorch tensor
-        decomp_cupy = cp.asarray(decomp_buffer)
-        decomp_tensor = torch.as_tensor(decomp_cupy, device=device)
+        # Step 3: Convert decompressed buffer to PyTorch tensor
+        decomp_tensor = torch.as_tensor(decomp_buffer, dtype=torch.uint8, device=device)
         
-        # Step 5: Restore original dtype
-        reconstructed = decomp_tensor.view(getattr(torch, original_dtype))
+        # Step 4: Restore original dtype and shape
+        target_dtype = getattr(torch, original_dtype)
         
-        # Step 6: Restore original shape
-        reconstructed = reconstructed.reshape(original_shape)
+        # Reshape directly on the view
+        reconstructed = decomp_tensor.view(target_dtype).reshape(original_shape)
+        
+        # Release intermediate buffer
+        del decomp_buffer, decomp_tensor
         
         return reconstructed

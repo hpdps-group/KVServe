@@ -32,6 +32,15 @@ from kvserve.engine.utils import (
     BatchedRequests,
     StepOutput,
 )
+from kvserve.manager.compression_manager import (
+    CompressedKVData, 
+    CompressionManager, 
+    CompressionConfig, 
+    EasyDist
+)
+from kvserve.transformer import KVServeTransformer
+from kvserve.quantizer import KVServeQuantizer
+from kvserve.codec import KVServeCodec
 from kvserve.engine.logger import log_error, log_info, log_debug, log_warning
 
 
@@ -131,11 +140,6 @@ class Worker:
     def _init_compression_manager(self):
         """Initialize compression manager with configured pipeline"""
         try:
-            from kvserve.manager.compression_manager import CompressionManager, CompressionConfig
-            from kvserve.transformer import KVServeTransformer
-            from kvserve.quantizer import KVServeQuantizer
-            from kvserve.codec import KVServeCodec
-            
             # Create compression config
             config = CompressionConfig(
                 enabled=self.compression_config.get("enabled", True),
@@ -668,15 +672,42 @@ class Worker:
             return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
         
         try:
-            block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
+            # Extract all layers KV data using extract_kv_blocks
+            kv_data = self.extract_kv_blocks(block_indices)
             
-            total_bytes = 0
-            for layer_kv in self.kv_cache:
-                layer_data = layer_kv[:, block_idx_tensor, :, :, :].contiguous()
-                torch.distributed.send(layer_data, dst=dst_rank)
-                total_bytes += layer_data.numel() * layer_data.element_size()
+            # Prepare metadata (shape and dtype)
+            metadata = {
+                "shape": kv_data.shape,
+                "dtype": str(kv_data.dtype).replace("torch.", ""),
+            }
             
-            torch.cuda.synchronize()
+            kv_data = kv_data.reshape(-1).view(torch.uint8)
+            metadata["size"] = kv_data.numel() * kv_data.element_size()
+
+            metadata_tensor, metadata_size_tensor = EasyDist.pack_object(metadata)
+            
+            # 1. Send metadata size
+            torch.distributed.send(metadata_size_tensor, dst=dst_rank)
+            
+            # 2. Send metadata
+            torch.distributed.send(metadata_tensor, dst=dst_rank)
+            
+            # 3. Send the entire KV tensor at once
+            torch.distributed.send(kv_data, dst=dst_rank)
+            
+            total_bytes = (
+                metadata_size_tensor.element_size() + 
+                metadata_tensor.numel() * metadata_tensor.element_size() + 
+                kv_data.numel() * kv_data.element_size()
+            )
+            
+            # Release memory
+            del kv_data
+            del metadata_tensor
+            del metadata_size_tensor
+            gc.collect()
+            torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
             return {"bytes": total_bytes, "blocks": len(block_indices)}
         except Exception as e:
             error_msg = f"NCCL send failed: {type(e).__name__}: {str(e)}"
@@ -689,25 +720,43 @@ class Worker:
             return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
         
         try:
-            block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
             
-            num_kv = 2
-            num_blocks = len(block_indices)
-            block_size = self.kv_cache[0].shape[2]
-            num_heads = self.kv_cache[0].shape[3]
-            head_size = self.kv_cache[0].shape[4]
-            kv_dtype = self.kv_cache[0].dtype
+            # 1. Receive metadata size(int64)
+            metadata_size_tensor = torch.empty(1, dtype=torch.int64, device=self.device)
+            torch.distributed.recv(metadata_size_tensor, src=src_rank)
+            metadata_size = metadata_size_tensor.item()
             
-            layer_shape = (num_kv, num_blocks, block_size, num_heads, head_size)
-            total_bytes = 0
+            # 2. Receive metadata(uint8)
+            metadata_tensor = torch.empty(metadata_size, dtype=torch.uint8, device=self.device)
+            torch.distributed.recv(metadata_tensor, src=src_rank)
             
-            for layer_idx, layer_kv in enumerate(self.kv_cache):
-                layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
-                torch.distributed.recv(layer_data, src=src_rank)
-                layer_kv[:, block_idx_tensor, :, :, :] = layer_data
-                total_bytes += layer_data.numel() * layer_data.element_size()
+            # Unpack metadata
+            metadata = EasyDist.unpack_object(metadata_tensor)
+            kv_shape = metadata["shape"]
+            kv_dtype = getattr(torch, metadata["dtype"])
+            kv_size = metadata["size"]
+
+            # 3. Receive all layers at once(uint8)
+            kv_data = torch.empty(kv_size, dtype=torch.uint8, device=self.device)
+            torch.distributed.recv(kv_data, src=src_rank)
             
-            torch.cuda.synchronize()
+            # Write to cache using write_kv_blocks
+            kv_data = kv_data.view(kv_dtype).reshape(kv_shape)
+            self.write_kv_blocks(block_indices, kv_data)
+            
+            total_bytes = (
+                metadata_size_tensor.element_size() + 
+                metadata_tensor.numel() * metadata_tensor.element_size() + 
+                kv_data.numel() * kv_data.element_size()
+            )
+            
+            # Release memory
+            del kv_data
+            del metadata_tensor
+            del metadata_size_tensor
+            gc.collect()
+            torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
             return {"bytes": total_bytes, "blocks": len(block_indices)}
         except Exception as e:
             error_msg = f"NCCL recv failed: {type(e).__name__}: {str(e)}"
@@ -759,28 +808,10 @@ class Worker:
                 src_blocks
             )
             
-            # ✅ STEP 2: Immediately start receiving (NCCL will sync)
-            # This coordinates the transfer more efficiently
-            block_idx_tensor = torch.tensor(dst_blocks, dtype=torch.long, device=self.device)
+            # ✅ STEP 2: Immediately start receiving (NCCL will sync)            
+            recv_result = self.p2p_recv_kv(src_rank, dst_blocks)
             
-            num_kv = 2
-            num_blocks = len(dst_blocks)
-            block_size = self.kv_cache[0].shape[2]
-            num_heads = self.kv_cache[0].shape[3]
-            head_size = self.kv_cache[0].shape[4]
-            kv_dtype = self.kv_cache[0].dtype
-            
-            layer_shape = (num_kv, num_blocks, block_size, num_heads, head_size)
-            total_bytes = 0
-            
-            # Receive layer by layer (zero-copy optimization)
-            for layer_idx, layer_kv in enumerate(self.kv_cache):
-                layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
-                torch.distributed.recv(layer_data, src=src_rank)
-                layer_kv[:, block_idx_tensor, :, :, :] = layer_data
-                total_bytes += layer_data.numel() * layer_data.element_size()
-            
-            torch.cuda.synchronize()
+            # torch.cuda.synchronize()
             
             # Wait for send to complete (should already be done due to NCCL sync)
             send_result = ray.get(send_future)
@@ -790,7 +821,7 @@ class Worker:
             if "error" in send_result:
                 return {"error": f"Send failed: {send_result['error']}", "bytes": 0, "blocks": 0}
             
-            return {"bytes": total_bytes, "blocks": len(dst_blocks), "elapsed": elapsed}
+            return {**recv_result, "elapsed": elapsed}
             
         except Exception as e:
             error_msg = f"Coordinated transfer failed: {type(e).__name__}: {str(e)}"
@@ -826,67 +857,70 @@ class Worker:
             # Extract all layers KV data
             kv_data = self.extract_kv_blocks(block_indices)  # [num_layers, 2, num_blocks, ...]
             
-            # Compress all layers together using optimized fast path
+            # TODO: Update compression config for every request
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
+
+            # Compress all layers together
             compressed_data = self.compression_manager.compress_all_layers(
                 all_layers_data=kv_data,
                 request_id=request_id,
+                config=config,
                 metadata={"block_indices": block_indices},
             )
             
-            # [MEMORY FIX] Immediately release original KV data after compression
+            # Release original KV data after compression
             del kv_data
-            torch.cuda.empty_cache()
             
             if compressed_data is None:
                 # Compression failed or disabled, fallback to uncompressed
                 log_warning(f"[Worker-{self.worker_id}] Compression failed, fallback to uncompressed transfer")
                 return self.p2p_send_kv(dst_rank, block_indices)
             
+            original_size = compressed_data.original_size
+            compressed_size = compressed_data.compressed_size
+            
             # Prepare metadata for transfer
-            # Add compressed_size (payload only) to metadata for receiver
-            payload_size = len(compressed_data.compressed_bytes)
-            compressed_data.compressed_size = payload_size
-            compressed_data.metadata["compressed_size"] = payload_size
+            metadata_tensor, metadata_size_tensor = EasyDist.pack_object(compressed_data.metadata)
+            metadata_size = metadata_size_tensor.item()
             
-            # Send: [metadata_size (int64), metadata_bytes, compressed_bytes]
-            import pickle
-            metadata_bytes = pickle.dumps(compressed_data.metadata)
-            metadata_size = len(metadata_bytes)
-            
-            # Send metadata size first (8 bytes, int64)
-            metadata_size_tensor = torch.tensor([metadata_size], dtype=torch.int64, device=self.device)
+            # Send metadata size first (int64)
             torch.distributed.send(metadata_size_tensor, dst=dst_rank)
+            del metadata_size_tensor # Release immediately
             
             # Send metadata
-            metadata_tensor = torch.frombuffer(
-                metadata_bytes, dtype=torch.uint8
-            ).to(self.device)
             torch.distributed.send(metadata_tensor, dst=dst_rank)
+            del metadata_tensor # Release immediately
             
             # Send compressed data
-            compressed_size = len(compressed_data.compressed_bytes)
-            compressed_tensor = torch.frombuffer(
-                compressed_data.compressed_bytes, dtype=torch.uint8
-            ).to(self.device)
-            torch.distributed.send(compressed_tensor, dst=dst_rank)
+            c_tensor = compressed_data.compressed_tensor
+            if c_tensor.device != self.device:
+                c_tensor = c_tensor.to(self.device)
+            torch.distributed.send(c_tensor, dst=dst_rank)
             
-            # [MEMORY FIX] Release tensors after send
-            del metadata_size_tensor
-            del metadata_tensor
-            del compressed_tensor
-            
-            torch.cuda.synchronize()
+            # Release compressed data immediately after send
+            del c_tensor
+            del compressed_data
+            gc.collect()
+            torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
             
             total_bytes_sent = 8 + metadata_size + compressed_size
-            compression_ratio = compressed_data.original_size / compressed_data.compressed_size
+            compression_ratio = original_size / (compressed_size + metadata_size)
             
-            log_info(f"[Worker-{self.worker_id}] Compressed send: {compressed_data.original_size} -> {compressed_data.compressed_size} bytes (ratio: {compression_ratio:.2f}x)")
+            log_info(f"[Worker-{self.worker_id}] Compressed send: {original_size} -> {compressed_size} bytes (ratio: {compression_ratio:.2f}x)")
             
             return {
                 "bytes": total_bytes_sent,
                 "blocks": len(block_indices),
-                "original_size": compressed_data.original_size,
-                "compressed_size": compressed_data.compressed_size,
+                "original_size": original_size,
+                "compressed_size": compressed_size,
                 "compression_ratio": compression_ratio,
             }
         
@@ -919,7 +953,7 @@ class Worker:
             return {"error": "Compression manager not initialized", "bytes": 0, "blocks": 0}
         
         try:
-            # Receive metadata size (8 bytes, int64)
+            # Receive metadata size (int64)
             metadata_size_tensor = torch.empty(1, dtype=torch.int64, device=self.device)
             torch.distributed.recv(metadata_size_tensor, src=src_rank)
             metadata_size = metadata_size_tensor.item()
@@ -927,15 +961,15 @@ class Worker:
             # Receive metadata
             metadata_tensor = torch.empty(metadata_size, dtype=torch.uint8, device=self.device)
             torch.distributed.recv(metadata_tensor, src=src_rank)
-            metadata_bytes = metadata_tensor.cpu().numpy().tobytes()
+
+            # Unpack metadata
+            metadata = EasyDist.unpack_object(metadata_tensor)
             
-            # [MEMORY FIX] Release tensor after use
-            del metadata_tensor
-            
-            import pickle
-            metadata = pickle.loads(metadata_bytes)
+            # Release tensor after use
+            del metadata_tensor, metadata_size_tensor
             
             # Infer compressed size from metadata
+            original_size = metadata.get("original_size")
             compressed_size = metadata.get("compressed_size")
             if compressed_size is None:
                 error_msg = "compressed_size not in metadata"
@@ -945,29 +979,38 @@ class Worker:
             # Receive compressed data
             compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
             torch.distributed.recv(compressed_tensor, src=src_rank)
-            compressed_bytes = compressed_tensor.cpu().numpy().tobytes()
-            
-            # [MEMORY FIX] Release tensor after use
-            del compressed_tensor
-            
-            torch.cuda.synchronize()
             
             # Reconstruct CompressedKVData
-            from kvserve.manager.compression_manager import CompressedKVData
             num_layers = metadata.get("num_layers", len(self.kv_cache))
             compressed_data = CompressedKVData(
                 request_id=metadata.get("request_id", "unknown"),
                 layer_id=num_layers - 1,  # layer_end_id
-                compressed_bytes=compressed_bytes,
+                compressed_tensor=compressed_tensor,
                 metadata=metadata,
                 original_size=metadata.get("original_size", 0),
-                compressed_size=len(compressed_bytes),
+                compressed_size=compressed_size,
             )
             
-            # Decompress all layers using the optimized fast path
-            kv_data = self.compression_manager.decompress_all_layers(compressed_data)
+            # Release local reference to tensor (it is held by compressed_data)
+            del compressed_tensor
             
-            # [MEMORY FIX] Release compressed_data after decompression
+            # TODO: Update compression config for every request
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
+
+            # Decompress all layers
+            kv_data = self.compression_manager.decompress_all_layers(
+                compressed_data=compressed_data,
+                config=config,
+            )
+            
+            # Release compressed_data immediately after decompression
             del compressed_data
             
             if kv_data is None:
@@ -978,17 +1021,21 @@ class Worker:
             # Write to KV cache
             self.write_kv_blocks(block_indices, kv_data)
             
-            # [MEMORY FIX] Release kv_data after writing to cache
+            # Release kv_data after writing to cache
             del kv_data
-            torch.cuda.empty_cache()
             
             total_bytes_received = 8 + metadata_size + compressed_size
-            compression_ratio = metadata.get("original_size", 0) / compressed_size if compressed_size > 0 else 1.0
+            compression_ratio = original_size / (compressed_size + metadata_size) if compressed_size > 0 else 1.0
             
+            # [MEMORY FIX] metadata is a dict, should be garbage collected, but explicit del helps
+            del metadata
+            gc.collect()
+            torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
             return {
                 "bytes": total_bytes_received,
                 "blocks": len(block_indices),
-                "original_size": metadata.get("original_size", 0),
+                "original_size": original_size,
                 "compressed_size": compressed_size,
                 "compression_ratio": compression_ratio,
             }

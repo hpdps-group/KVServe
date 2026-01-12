@@ -95,19 +95,18 @@ class KVServeTransformer(Transformer):
         Returns:
             Transformed tensor with same shape as input
         """
-        # Update transformer parameters for every request
-        # Only update parameters for the first layer
-        if layer_id == 0:
-            self.update_params(**kwargs)
+        # Don't need to update parameters here because compression manager will handle it
+        # if layer_id == 0:
+        #     self.update_params(**kwargs)
 
-        # Split the tensor into keys and values
-        keys = tensor[0]
-        values = tensor[1]
-
-        # Apply transformation to keys and values
-        keys = self.transformer.transform(layer_id, keys, **kwargs)
-        values = self.transformer.transform(layer_id, values, **kwargs)
-        return torch.stack([keys, values], dim=0)
+        out_tensor = torch.empty_like(tensor)
+        
+        # Apply transformation directly into output slices
+        # tensor[0] is keys, tensor[1] is values
+        out_tensor[0] = self.transformer.transform(layer_id, tensor[0], **kwargs)
+        out_tensor[1] = self.transformer.transform(layer_id, tensor[1], **kwargs)
+        
+        return out_tensor
 
     def inverse(
         self, 
@@ -125,12 +124,11 @@ class KVServeTransformer(Transformer):
             
         Returns:
             Restored tensor with original values
-        """
-        # Split the tensor into keys and values
-        keys = tensor[0]
-        values = tensor[1]
-
-        # Apply inverse transformation to keys and values
-        keys = self.transformer.inverse(layer_id, keys, **kwargs)
-        values = self.transformer.inverse(layer_id, values, **kwargs)
-        return torch.stack([keys, values], dim=0)
+        """        
+        out_tensor = torch.empty_like(tensor)
+        
+        # Apply inverse transformation directly into output slices
+        out_tensor[0] = self.transformer.inverse(layer_id, tensor[0], **kwargs)
+        out_tensor[1] = self.transformer.inverse(layer_id, tensor[1], **kwargs)
+        
+        return out_tensor

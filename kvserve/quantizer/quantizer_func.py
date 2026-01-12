@@ -36,7 +36,7 @@ w    Quantize tensor using min-max quantization
     """
     # If tensor is empty, return empty tensor and metadata
     if tensor.numel() == 0:
-        return tensor.to(torch.uint8), {"min_val": None, "quant_scale": None, "original_dtype": tensor.dtype, "quant_dtype": torch.uint8}
+        return tensor.to(torch.uint8), {"min_val": None, "quant_scale": None, "original_dtype": str(tensor.dtype).replace("torch.", ""), "quant_dtype": "uint8"}
 
     # Convert axis to list of dimensions
     if axis == "channel":
@@ -68,8 +68,8 @@ w    Quantize tensor using min-max quantization
     meta_data = {
         "min_val": min_.to(tensor.dtype),
         "quant_scale": scale.to(tensor.dtype),
-        "original_dtype": tensor.dtype,
-        "quant_dtype": torch.uint8,
+        "original_dtype": str(tensor.dtype).replace("torch.", ""),
+        "quant_dtype": "uint8",
     }
     
     return quantized_tensor, meta_data
@@ -97,15 +97,15 @@ def dequantize(
     """
     # If tensor is empty, return empty tensor
     if meta_data["min_val"] is None:
-        return quantized_tensor.to(meta_data["original_dtype"])
+        return quantized_tensor.to(getattr(torch, meta_data["original_dtype"]))
 
     # Step 1: Extract metadata
     min_val = meta_data["min_val"]
     quant_scale = meta_data["quant_scale"]
-    original_dtype = meta_data.get("original_dtype", torch.float16)
+    original_dtype = meta_data.get("original_dtype", "bfloat16")
 
     # Step 2: Type conversion (cast to original dtype for calculation)
-    quant_float = quantized_tensor.to(original_dtype)
+    quant_float = quantized_tensor.to(getattr(torch, original_dtype))
 
     # Step 3: Dequantization calculation
     # Formula: result = quantized * scale + min_value

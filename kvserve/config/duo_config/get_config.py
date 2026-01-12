@@ -6,7 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from transformers.models.gemma3.modeling_gemma3 import Gemma3Attention
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
-from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention
+# from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention
 
 from kvserve.engine.logger import log_info
 
@@ -60,16 +60,16 @@ class DuoConfigGenerator:
                     # Mean query
                     q = module.self_attn.q_proj(h)
                     q = q.view(1, q.shape[1], -1, d)
-                    if isinstance(module, (Gemma3Attention, Qwen3Attention)):
-                        q = module.q_norm(q)
+                    # if isinstance(module, (Gemma3Attention, Qwen3Attention)):
+                    #     q = module.q_norm(q)
                     q = q.mean(dim=1, keepdim=True)
                     q = q.repeat(1, q_len, 1, 1).transpose(1, 2)
 
                     # Mean key
                     k = module.self_attn.k_proj(h)
                     k = k.view(1, k.shape[1], -1, d)
-                    if isinstance(module, (Gemma3Attention, Qwen3Attention)):
-                        k = module.k_norm(k)
+                    # if isinstance(module, (Gemma3Attention, Qwen3Attention)):
+                    #     k = module.k_norm(k)
                     k = k.mean(dim=1, keepdim=True)
                     k = k.repeat(1, q_len, 1, 1).transpose(1, 2)
 

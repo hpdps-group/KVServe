@@ -22,7 +22,7 @@ from kvserve.engine.backend import PDBackend
 from kvserve.eval.runner import run_evaluation
 
 # Model path (update this if needed)
-MODEL_PATH = "/root/ssd/Llama3.1-8B-Instruct"
+MODEL_PATH = "/root/workspace/models/Llama-3.1-8B-Instruct"
 
 # Compression configuration (based on test_kvserve_manager.py)
 COMPRESSION_CONFIG = {
@@ -67,7 +67,7 @@ async def run_eval_with_compression():
             os.environ["PYTHONPATH"] = project_root + (":" + env_pythonpath if env_pythonpath else "")
         
         # Pin GPUs to 6 and 7
-        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "6,7")
+        # os.environ.setdefault("CUDA_VISIBLE_DEVICES", "6,7")
         
         ray.init(
             ignore_reinit_error=True,
@@ -89,13 +89,13 @@ async def run_eval_with_compression():
         num_prefill_workers=1,
         num_decoding_workers=1,
         block_size=16,
-        dtype="float16",
+        dtype="bfloat16",
         gpu_memory_utilization=0.75, 
         kv_transfer_method="nccl",
         nccl_init_method="tcp://localhost:29500",
         log_level="WARNING",
-        max_model_len=5000,
-        max_batch_size=4,
+        max_model_len=32768,
+        max_batch_size=1,
         compression_config=COMPRESSION_CONFIG,
     )
     
@@ -103,7 +103,7 @@ async def run_eval_with_compression():
     backend.default_temperature = 0.0
     backend.default_top_p = 1.0
     backend.default_top_k = 0.0
-    backend.max_new_tokens = 512
+    backend.max_new_tokens = 128
     
     print("✓ Backend created")
     print()
@@ -120,7 +120,7 @@ async def run_eval_with_compression():
         
         # Run evaluation (report real params instead of hardcoded text)
         eval_tasks = ["longbench_qasper"]
-        eval_batch_size = 4
+        eval_batch_size = 1
         eval_limit = None  # limit disabled by default; set an int to cap examples
 
         print("[4] Running evaluation...")

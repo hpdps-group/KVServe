@@ -6,6 +6,9 @@ Coordinates transformer, quantizer, and codec compression components
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import torch
+import gc
+import msgpack
+import numpy as np
 
 from kvserve.manager.components import Transformer, Quantizer, Codec
 from kvserve.quantizer import KVServeQuantizer
@@ -34,11 +37,11 @@ class CompressedKVData:
     """Compressed KV cache data structure"""
     request_id: str
     layer_id: int
-    compressed_bytes: bytes
+    compressed_tensor: torch.Tensor
     metadata: Dict[str, Any]  # Includes compression config, original size, etc.
     original_size: int
     compressed_size: int
-
+    # metadata_size: int
 
 class CompressionManager:
     """
@@ -86,6 +89,18 @@ class CompressionManager:
                 elif component_name == "codec" and self.codec is None:
                     raise ValueError("Codec compression component required but not provided")
     
+    def update_config(self, config: CompressionConfig):
+        """
+        Update Compression Manager configuration
+        """
+        self.config = config
+        if self.transformer is not None:
+            self.transformer.update_params(**self.config.transformer_config)
+        if self.quantizer is not None:
+            self.quantizer.update_params(**self.config.quantizer_config)
+        if self.codec is not None:
+            self.codec.update_params(**self.config.codec_config)
+
     def compress(
         self,
         layer_id: int,
@@ -322,12 +337,16 @@ class CompressionManager:
         self,
         all_layers_data: Any,  # torch.Tensor [num_layers, 2, num_blocks, block_size, num_heads, head_size]
         request_id: str,
+        config: CompressionConfig,
         metadata: Dict[str, Any],
     ) -> Optional[CompressedKVData]:
         """
         Optimized fast path: compress all layers in a single batch with minimal overhead.
         Avoids repeated function calls by processing all layers in a tight loop.
         """
+        # Update compression config for every request
+        self.update_config(config)
+
         if not self.config.enabled or not self.config.pipeline:
             return None
         if not isinstance(all_layers_data, torch.Tensor) or all_layers_data.dim() != 6:
@@ -336,7 +355,7 @@ class CompressionManager:
 
         try:
             num_layers = all_layers_data.shape[0]
-            original_size = self._get_data_size(all_layers_data)
+            original_size = all_layers_data.numel() * all_layers_data.element_size()
             
             if original_size < self.config.min_compress_size:
                 return None
@@ -345,17 +364,9 @@ class CompressionManager:
             self.original_size = original_size
             self.compressed_size = 0
             
-            # Update component parameters once
-            if self.transformer is not None:
-                self.transformer.update_params(**self.config.transformer_config)
-            if self.quantizer is not None:
-                self.quantizer.update_params(**self.config.quantizer_config)
-            if self.codec is not None:
-                self.codec.update_params(**self.config.codec_config)
-
+            # Prepare compression metadata
             compression_metadata = {
                 "request_id": request_id,
-                "pipeline": self.config.pipeline.copy(),
                 "original_dtype": str(all_layers_data.dtype).replace("torch.", ""),
                 "original_size": original_size,
                 "device": str(all_layers_data.device),
@@ -364,29 +375,47 @@ class CompressionManager:
                 **metadata,
             }
 
-            # Pre-allocate buffer for transformed/quantized data
-            first_layer = all_layers_data[0]
-            processed_first = first_layer
+            quantization_params_list = []
             
-            # Process first layer to determine output shape
+            # Process first layer to determine output shape and dtype
+            first_layer = all_layers_data[0]
+            processed_data = first_layer
+            
             if "transformer" in self.config.pipeline:
-                processed_first = self.transformer.transform(0, processed_first, **self.config.transformer_config)
+                processed_data = self.transformer.transform(0, processed_data, **self.config.transformer_config)
                 compression_metadata["transformer_applied"] = True
             
-            quantization_params_list = []
             if "quantizer" in self.config.pipeline:
-                processed_first, first_qparams = self.quantizer.quantize(
-                    0, processed_first, **self.config.quantizer_config
+                processed_data, qparams = self.quantizer.quantize(
+                    0, processed_data, **self.config.quantizer_config
                 )
-                quantization_params_list.append(first_qparams)
+                quantization_params_list.append(qparams)
                 compression_metadata["quantization_applied"] = True
             
-            # Pre-allocate output buffer
-            buffer_shape = (num_layers,) + processed_first.shape
-            processed_buffer = torch.empty(buffer_shape, dtype=processed_first.dtype, device=processed_first.device)
-            processed_buffer[0] = processed_first
+            # 2. Determine target permuted shape
+            layer_permuted_shape = (
+                processed_data.shape[0], # 2
+                processed_data.shape[3], # heads
+                processed_data.shape[1], # blocks
+                processed_data.shape[2], # block_size
+                processed_data.shape[4]  # head_size
+            )
+            
+            # 3. Allocate ONE contiguous buffer for all layers
+            full_shape = (num_layers,) + layer_permuted_shape
+            processed_buffer = torch.empty(
+                full_shape, 
+                dtype=processed_data.dtype, 
+                device=processed_data.device
+            )
 
-            # Tight loop: process remaining layers directly into buffer
+            # 4. Write first layer directly into buffer
+            processed_buffer[0].copy_(processed_data.permute(0, 3, 1, 2, 4))
+            
+            # Clean up first layer intermediates immediately
+            del processed_data
+            
+            # 5. Process remaining layers and write directly
             for layer_id in range(1, num_layers):
                 current_data = all_layers_data[layer_id]
                 
@@ -401,39 +430,37 @@ class CompressionManager:
                     )
                     quantization_params_list.append(qparams)
                 
-                processed_buffer[layer_id] = current_data
+                # Direct copy to pre-allocated buffer (no stacking)
+                processed_buffer[layer_id].copy_(current_data.permute(0, 3, 1, 2, 4))
+                
+                # Release loop variable immediately
+                del current_data
 
-            # Attach quantization params
             if "quantizer" in self.config.pipeline:
                 compression_metadata["quantization_params"] = quantization_params_list
 
-            # Permute to codec-friendly layout
-            processed_buffer = processed_buffer.permute(0, 1, 4, 2, 3, 5)
-            compression_metadata["compressed_shape"] = list(processed_buffer.shape)
-            compression_metadata["compressed_dtype"] = str(processed_buffer.dtype).replace("torch.", "")
+            compression_metadata["codec_shape"] = list(processed_buffer.shape)
+            compression_metadata["codec_dtype"] = str(processed_buffer.dtype).replace("torch.", "")
 
             # Codec compression
-            compressed_bytes, compression_metadata = self._handle_codec_compression(
+            compressed_tensor, compression_metadata = self._handle_codec_compression(
                 processed_buffer, compression_metadata, num_layers - 1, request_id
             )
             
-            # Release buffer
+            # Release large buffer immediately
             del processed_buffer
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-
+            
             # Use actual payload bytes as compressed_size; metadata is sent separately
-            compressed_size = len(compressed_bytes)
-            self.compressed_size = compressed_size
+            self.compressed_size = compressed_tensor.numel() * compressed_tensor.element_size()
+            compression_metadata["compressed_size"] = self.compressed_size
 
             return CompressedKVData(
                 request_id=request_id,
                 layer_id=num_layers - 1,
-                compressed_bytes=compressed_bytes,
+                compressed_tensor=compressed_tensor,
                 metadata=compression_metadata,
                 original_size=original_size,
-                compressed_size=compressed_size,
+                compressed_size=self.compressed_size,
             )
 
         except Exception as e:
@@ -445,10 +472,11 @@ class CompressionManager:
     def decompress_all_layers(
         self,
         compressed_data: CompressedKVData,
+        config: CompressionConfig,
     ) -> Optional[Any]:  # Returns torch.Tensor [num_layers, 2, ...]
         """
         Optimized fast path: decompress all layers with minimal overhead.
-        Uses batch quantizer interface and tight loops.
+        Uses pre-allocation and tight loops to minimize memory peaks.
         
         Args:
             compressed_data: CompressedKVData from compress_all_layers()
@@ -456,87 +484,87 @@ class CompressionManager:
         Returns:
             Decompressed KV cache tensor [num_layers, 2, ...], None if decompression failed
         """
-        if not self.config.enabled:
+        self.update_config(config)
+
+        if not self.config.enabled or not self.config.pipeline:
             return None
         
         try:
             import torch
             
-            pipeline = compressed_data.metadata.get("pipeline", [])
-            if not pipeline:
-                return None
-            
             num_layers = compressed_data.metadata.get("num_layers")
             if num_layers is None:
-                log_error(f"[CompressionManager] Missing num_layers in metadata. Available keys: {list(compressed_data.metadata.keys())}")
+                log_error(f"[CompressionManager] Missing num_layers in metadata.")
                 return None
             
-            log_info(f"[CompressionManager] Decompressing {num_layers} layers, pipeline={pipeline}")
-            
-            # One-time component parameter update
-            if self.transformer is not None:
-                self.transformer.update_params(**self.config.transformer_config)
-            if self.quantizer is not None:
-                self.quantizer.update_params(**self.config.quantizer_config)
-            if self.codec is not None:
-                self.codec.update_params(**self.config.codec_config)
-            
-            current_data = compressed_data.compressed_bytes
-            
             # Step 1: Codec decompression (all layers together)
+            # Returns tensor of shape [layers, 2, heads, blocks, block_size, head_size]
             current_data = self._handle_codec_decompression(
-                current_data, compressed_data, pipeline, 0
+                compressed_data.compressed_tensor, compressed_data, self.config.pipeline, 0
             )
-            
-            # Convert bytes to tensor if codec was skipped
-            if isinstance(current_data, bytes):
-                current_data = self._bytes_to_tensor(current_data, compressed_data.metadata)
-            
-            # Permute back from codec layout
-            if isinstance(current_data, torch.Tensor) and current_data.dim() == 6:
-                current_data = current_data.permute(0, 1, 3, 4, 2, 5)
-                current_data = current_data.to(
-                    getattr(torch, compressed_data.metadata.get("original_dtype", "bfloat16"), torch.bfloat16)
-                )
             
             if not isinstance(current_data, torch.Tensor):
                 log_error(f"[CompressionManager] Expected tensor after codec decode, got {type(current_data)}")
                 return None
             
-            # Step 2: Batch dequantization (optimized)
-            if "quantizer" in pipeline:
-                quantization_params = compressed_data.metadata.get("quantization_params")
-                if quantization_params is None:
-                    log_error(f"[CompressionManager] Missing quantization params")
-                    return None
-                
-                # Use batch dequantize interface
-                current_data = self.quantizer.dequantize(
-                    num_layers - 1,  # layer_end_id
-                    current_data,
-                    quantization_params,
-                    **self.config.quantizer_config
-                )
+            target_layer_shape = (
+                current_data.shape[1], # 2
+                current_data.shape[3], # blocks
+                current_data.shape[4], # block_size
+                current_data.shape[2], # heads
+                current_data.shape[5], # head_size
+            )
+            full_target_shape = (num_layers,) + target_layer_shape
             
-            # Step 3: Inverse transform per layer (tight loop)
-            if "transformer" in pipeline:
-                # Pre-allocate output
-                first_transformed = self.transformer.inverse(
-                    0, current_data[0], **self.config.transformer_config
-                )
-                output_shape = (num_layers,) + first_transformed.shape
-                restored_kv = torch.empty(output_shape, dtype=first_transformed.dtype, device=first_transformed.device)
-                restored_kv[0] = first_transformed
+            # Determine dtype (restore original dtype)
+            target_dtype = getattr(torch, compressed_data.metadata.get("original_dtype", "bfloat16"), torch.bfloat16)
+            
+            processed_buffer = torch.empty(
+                full_target_shape,
+                dtype=target_dtype,
+                device=current_data.device
+            )
+            
+            # Step 2 & 3: Dequantize and Transform loop (write directly to buffer)
+            for layer_id in range(num_layers):
+                current_layer_data = current_data[layer_id].permute(0, 2, 3, 1, 4)
                 
-                # Tight loop for remaining layers
-                for layer_id in range(1, num_layers):
-                    restored_kv[layer_id] = self.transformer.inverse(
-                        layer_id, current_data[layer_id], **self.config.transformer_config
+                # Batch dequantization
+                if "quantizer" in self.config.pipeline:
+                    quantization_params = compressed_data.metadata.get("quantization_params")[layer_id]
+                    if quantization_params is None:
+                        log_error(f"[CompressionManager] Missing quantization params")
+                        return None
+                    
+                    current_layer_data = self.quantizer.dequantize(
+                        layer_id,
+                        current_layer_data,
+                        quantization_params,
+                        **self.config.quantizer_config
                     )
-                current_data = restored_kv
             
-            log_info(f"[CompressionManager] Decompression SUCCESS: {num_layers} layers, shape={current_data.shape}")
-            return current_data
+                # Inverse transform
+                if "transformer" in self.config.pipeline:
+                    current_layer_data = self.transformer.inverse(
+                        layer_id, 
+                        current_layer_data, 
+                        **self.config.transformer_config
+                    )
+                
+                # Write to buffer (cast if necessary, though operations usually preserve/set dtype)
+                if current_layer_data.dtype != target_dtype:
+                    current_layer_data = current_layer_data.to(target_dtype)
+                    
+                processed_buffer[layer_id].copy_(current_layer_data)
+                
+                # Release intermediates
+                del current_layer_data
+
+            # Release codec output buffer
+            del current_data
+            
+            log_info(f"[CompressionManager] Decompression SUCCESS: {num_layers} layers, shape={processed_buffer.shape}")
+            return processed_buffer
             
         except Exception as e:
             log_error(f"[CompressionManager] All-layer decompression failed for {compressed_data.request_id}: {e}")
@@ -556,74 +584,36 @@ class CompressionManager:
         
         Returns:
             Tuple of (compressed_bytes, updated_metadata)
-        """
-        # Save tensor shape and dtype before converting to bytes
-        if isinstance(tensor_data, torch.Tensor):
-            compression_metadata["original_shape"] = list(tensor_data.shape)
-            compression_metadata["original_dtype"] = str(tensor_data.dtype).replace("torch.", "")
-        
+        """        
         if "codec" in self.config.pipeline:
-            # Save original bytes to detect if compression was skipped
-            original_bytes = self._tensor_to_bytes(tensor_data)
-            
-            # Log tensor information for debugging
-            tensor_info = {
-                "request_id": request_id,
-                "layer_id": layer_id,
-            }
-            if isinstance(tensor_data, torch.Tensor):
-                tensor_info.update({
-                    "shape": list(tensor_data.shape),
-                    "dtype": str(tensor_data.dtype),
-                    "numel": tensor_data.numel(),
-                    "size_bytes": len(original_bytes),
-                    "device": str(tensor_data.device),
-                })
-            else:
-                tensor_info["type"] = type(tensor_data).__name__
-            
-            # Try codec compression
             try:
-                compressed_bytes = self.codec.encode(
+                compressed_tensor = self.codec.encode(
                     layer_id,
                     tensor_data,
                     **self.config.codec_config
                 )
-                
-                # Check if compression was actually applied
-                if compressed_bytes == original_bytes:
-                    # Compression was skipped (boundary condition)
-                    print(f"[CompressionManager] Codec skipped (boundary condition) for {request_id}, layer {layer_id}:")
-                    print(f"  Tensor info: {tensor_info}")
-                    print(f"  Reason: Compressed bytes identical to original (likely scalar/invalid format returned by nvCOMP)")
-                    compression_metadata["codec_skipped"] = True
-                    compression_metadata["codec_applied"] = False
-                else:
-                    # Compression was successfully applied
-                    compression_ratio = len(original_bytes) / len(compressed_bytes) if len(compressed_bytes) > 0 else 0
-                    compression_metadata["codec_applied"] = True
-                    compression_metadata["codec_skipped"] = False
+                compression_metadata["codec_applied"] = True
                     
             except Exception as e:
                 # Codec compression failed (e.g., OOM), skip compression
                 print(f"[CompressionManager] Codec compression FAILED for {request_id}, layer {layer_id}:")
-                print(f"  Tensor info: {tensor_info}")
-                print(f"  Error: {type(e).__name__}: {e}")
-                print(f"  Fallback: Using uncompressed data ({len(original_bytes)} bytes)")
-                compressed_bytes = original_bytes
+                # print(f"  Tensor info: {tensor_info}")
+                # print(f"  Error: {type(e).__name__}: {e}")
+                # print(f"  Fallback: Using uncompressed data ({len(original_bytes)} bytes)")
+                # compressed_bytes = original_bytes
                 compression_metadata["codec_skipped"] = True
-                compression_metadata["codec_applied"] = False
+                # compression_metadata["codec_applied"] = False
         else:
             # If no codec compression, just convert to bytes
-            compressed_bytes = self._tensor_to_bytes(tensor_data)
-            compression_metadata["codec_applied"] = False
-            compression_metadata["codec_skipped"] = False
+            compressed_tensor = tensor_data.reshape(-1).view(torch.uint8).contiguous()
+            # compression_metadata["codec_applied"] = False
+            # compression_metadata["codec_skipped"] = True
         
-        return compressed_bytes, compression_metadata
+        return compressed_tensor, compression_metadata
     
     def _handle_codec_decompression(
         self,
-        compressed_bytes: bytes,
+        compressed_tensor: torch.Tensor,
         compressed_data: CompressedKVData,
         pipeline: List[str],
         layer_id: int
@@ -635,27 +625,26 @@ class CompressionManager:
             Decompressed tensor or bytes (if codec was skipped)
         """
         # Check if codec was skipped during compression
-        codec_skipped = compressed_data.metadata.get("codec_skipped", False)
+        # codec_skipped = compressed_data.metadata.get("codec_skipped", False)
         codec_applied = compressed_data.metadata.get("codec_applied", False)
-        
-        if "codec" in pipeline and codec_applied and not codec_skipped:
+        codec_dtype = compressed_data.metadata.get("codec_dtype")
+        codec_shape = compressed_data.metadata.get("codec_shape")        
+        if "codec" in pipeline and codec_applied:
             # Codec was actually applied, perform decompression
-            original_dtype = compressed_data.metadata.get("original_dtype")
-            original_shape = compressed_data.metadata.get("original_shape")
             device = compressed_data.metadata.get("device")
-            assert original_dtype is not None and original_shape is not None and device is not None, \
+            assert codec_dtype is not None and codec_shape is not None and device is not None, \
                 "Original dtype, shape, and device are required for decompression"
             return self.codec.decode(
                 layer_id,
-                compressed_bytes,
-                original_dtype,
-                original_shape,
+                compressed_tensor,
+                codec_dtype,
+                codec_shape,
                 device,
                 **self.config.codec_config
             )
         else:
             # Codec was skipped or not in pipeline, return bytes for later conversion
-            return compressed_bytes
+            return compressed_tensor.view(getattr(torch, codec_dtype)).reshape(codec_shape)
     
     def _get_data_size(self, data: Any) -> int:
         """Calculate size of data in bytes"""
@@ -715,3 +704,202 @@ class CompressionManager:
             import pickle
             return pickle.loads(data_bytes)
 
+
+class EasyDist:
+    # Memory alignment size (bytes), ensures Tensor reads are address-aligned to avoid illegal memory access
+    ALIGNMENT = 256 
+
+    @classmethod
+    def pack_object(cls, obj: Any):
+        """
+        Pack arbitrary mixed objects (Dict, List, Tensor nested structures) for transmission.
+        """
+        # 1. Pack into a single Super Tensor on GPU
+        super_tensor = cls._pack_to_gpu(obj)
+        
+        # 2. Send total size (handshake)
+        # This step is necessary - the receiver needs to know how much memory to allocate
+        size_tensor = torch.tensor([super_tensor.numel()], dtype=torch.int64, device=super_tensor.device)
+        
+        # 3. Send Super Tensor (one-shot transmission of all data)
+        return super_tensor, size_tensor
+
+    @classmethod
+    def unpack_object(cls, super_tensor: torch.Tensor) -> Any:
+        """
+        Unpack arbitrary mixed objects from a super tensor.
+        """
+        # 3. Unpack
+        return cls._unpack_from_gpu(super_tensor)
+
+    @classmethod
+    def compare(cls, obj1, obj2, path=""):
+        """
+        Compare two objects recursively.
+        """
+        if type(obj1) != type(obj2):
+            raise AssertionError(f"Type mismatch at {path}: {type(obj1)} vs {type(obj2)}")
+        if isinstance(obj1, dict):
+            assert obj1.keys() == obj2.keys(), f"Key mismatch at {path}: {obj1.keys()} vs {obj2.keys()}"
+            for k in obj1:
+                cls.compare(obj1[k], obj2[k], path + f".{k}")
+        elif isinstance(obj1, list):
+            assert len(obj1) == len(obj2), f"List length mismatch at {path}: {len(obj1)} vs {len(obj2)}"
+            for i, (x, y) in enumerate(zip(obj1, obj2)):
+                cls.compare(x, y, path + f"[{i}]")
+        elif isinstance(obj1, torch.Tensor):
+            assert obj1.shape == obj2.shape, f"Tensor shape mismatch at {path}: {obj1.shape} vs {obj2.shape}"
+            assert obj1.dtype == obj2.dtype, f"Tensor dtype mismatch at {path}: {obj1.dtype} vs {obj2.dtype}"
+            assert torch.allclose(obj1, obj2, atol=1e-3, rtol=1e-3), f"Tensor value mismatch at {path}"
+        else:
+            assert obj1 == obj2, f"Value mismatch at {path}: {obj1} vs {obj2}"
+            
+    # ================= Internal Implementation (Black Box) =================
+
+    @classmethod
+    def _pack_to_gpu(cls, obj: Any) -> torch.Tensor:
+        """Convert object into a single uint8 tensor"""
+        tensors = []
+        # Recursively extract Tensors and generate skeleton (CPU operation, very fast)
+        skeleton = cls._extract_tensors(obj, tensors)
+        
+        # 1. Serialize skeleton (MsgPack)
+        # Store dtype information for restoration
+        if tensors:
+            skeleton['__dtype__'] = str(tensors[0].dtype).split('.')[-1]
+        
+        meta_bytes = msgpack.packb(skeleton, use_bin_type=True)
+        meta_np = np.frombuffer(meta_bytes, dtype=np.uint8).copy()
+        
+        # 2. Prepare shape information (Shapes)
+        # Format: [N, Rank1, D1..., Rank2, D2...]
+        shape_flat = [len(tensors)]
+        for t in tensors:
+            shape_flat.append(t.dim())
+            shape_flat.extend(t.shape)
+        shape_np = np.array(shape_flat, dtype=np.int64)
+        
+        # 3. Calculate offsets (Offset Calculation)
+        # We need to concatenate metadata, shapes, and payloads together
+        # Layout: [Header(3 ints)] + [Meta Bytes] + [Padding] + [Shape Bytes] + [Padding] + [Payloads]
+        
+        len_meta = len(meta_np)
+        len_shapes = len(shape_np) * 8 # int64 = 8 bytes
+        
+        # Calculate total payload size in bytes
+        payload_size = sum(t.numel() * t.element_size() for t in tensors)
+        
+        # Align offsets
+        offset_meta = 32 # Header reserves 32 bytes
+        offset_shapes = cls._align(offset_meta + len_meta)
+        offset_payload = cls._align(offset_shapes + len_shapes)
+        total_size = offset_payload + payload_size
+        
+        # 4. Allocate Super Buffer (GPU)
+        # This is the only memory allocation, very efficient
+        device = tensors[0].device if tensors else 'cuda'
+        buffer = torch.zeros(total_size, dtype=torch.uint8, device=device)
+        
+        # 5. Write Header (record lengths/offsets of each region)
+        # Header: [Meta_Len, Shape_Len, Payload_Offset]
+        header_data = torch.tensor([len_meta, len_shapes, offset_payload], dtype=torch.long, device=device)
+        # Write header to buffer head (int64 -> uint8 view)
+        buffer[:24] = header_data.view(torch.uint8)
+        
+        # 6. Write Meta and Shapes (CPU -> GPU copy)
+        buffer[offset_meta : offset_meta + len_meta] = torch.from_numpy(meta_np).to(device)
+        buffer[offset_shapes : offset_shapes + len_shapes] = torch.from_numpy(shape_np).view(torch.uint8).to(device)
+        
+        # 7. Write Payloads (D2D copy, fastest)
+        if tensors:
+            # Flatten & Concat all tensor data
+            # Note: Assumes all tensors have the same dtype. If different, need to convert to view(uint8) then cat
+            flat_payload = torch.cat([t.view(torch.uint8).view(-1) for t in tensors])
+            buffer[offset_payload : offset_payload + len(flat_payload)] = flat_payload
+            
+        return buffer
+
+    @classmethod
+    def _unpack_from_gpu(cls, buffer: torch.Tensor) -> Any:
+        """Restore object from a single Tensor"""
+        # 1. Read Header
+        header = buffer[:24].view(torch.int64) # 3 int64 values
+        len_meta = header[0].item()
+        len_shapes = header[1].item()
+        offset_payload = header[2].item()
+        
+        # 2. Read Meta (need to transfer back to CPU for parsing)
+        offset_meta = 32
+        meta_bytes = buffer[offset_meta : offset_meta + len_meta].cpu().numpy().tobytes()
+        skeleton = msgpack.unpackb(meta_bytes, raw=False)
+        
+        # 3. Restore Tensor list
+        reconstructed_tensors = []
+        num_tensors = 0
+        
+        if len_shapes > 0:
+            offset_shapes = cls._align(offset_meta + len_meta)
+            # view as int64
+            shape_data = buffer[offset_shapes : offset_shapes + len_shapes].view(torch.int64).cpu().tolist()
+            num_tensors = shape_data[0]
+            
+            # Get dtype
+            dtype_str = skeleton.get('__dtype__', 'bfloat16')
+            if '__dtype__' in skeleton: del skeleton['__dtype__'] # Clean up helper key
+            target_dtype = getattr(torch, dtype_str)
+            element_size = torch.tensor([], dtype=target_dtype).element_size()
+            
+            ptr_shape = 1
+            ptr_payload = offset_payload
+            
+            for _ in range(num_tensors):
+                rank = shape_data[ptr_shape]
+                dims = shape_data[ptr_shape + 1 : ptr_shape + 1 + rank]
+                ptr_shape += (1 + rank)
+                
+                # Calculate byte length
+                numel = 1
+                for d in dims: numel *= d
+                byte_size = numel * element_size
+                
+                # Zero-Copy slice + View
+                # Note: buffer is uint8, need to view as target dtype
+                raw_bytes = buffer[ptr_payload : ptr_payload + byte_size]
+                tensor = raw_bytes.view(target_dtype).view(dims)
+                reconstructed_tensors.append(tensor)
+                
+                ptr_payload += byte_size
+
+        # 4. Recursively restore
+        return cls._restore_tensors(skeleton, reconstructed_tensors)
+
+    # --- Helper Functions ---
+    @staticmethod
+    def _align(ptr):
+        """Align pointer to ALIGNMENT boundary (256 bytes)"""
+        return (ptr + 255) & ~255
+
+    @classmethod
+    def _extract_tensors(cls, obj, tensor_list):
+        """Recursively extract tensors from nested structure and generate skeleton"""
+        if isinstance(obj, torch.Tensor):
+            tensor_list.append(obj)
+            return {'__tensor__': len(tensor_list) - 1} # Placeholder
+        elif isinstance(obj, list):
+            return [cls._extract_tensors(x, tensor_list) for x in obj]
+        elif isinstance(obj, dict):
+            return {k: cls._extract_tensors(v, tensor_list) for k, v in obj.items()}
+        else:
+            return obj
+
+    @classmethod
+    def _restore_tensors(cls, obj, tensor_list):
+        """Recursively restore nested structure by replacing placeholders with actual tensors"""
+        if isinstance(obj, dict) and '__tensor__' in obj and len(obj) == 1:
+            return tensor_list[obj['__tensor__']]
+        elif isinstance(obj, list):
+            return [cls._restore_tensors(x, tensor_list) for x in obj]
+        elif isinstance(obj, dict):
+            return {k: cls._restore_tensors(v, tensor_list) for k, v in obj.items()}
+        else:
+            return obj

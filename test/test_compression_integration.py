@@ -4,6 +4,7 @@ Tests the complete compression pipeline with real KV cache structure
 """
 
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import sys
 
 # Add project root to sys.path for direct import
@@ -27,11 +28,11 @@ def test_compression_with_worker_structure():
     # Simulate real KV cache structure
     # vLLM v0 uses: kv_cache[layer_idx] = [num_kv=2, num_blocks, block_size, num_heads, head_size]
     # Use same dimensions as test_all_layer_compression.py for compatibility with quantizer config
-    num_layers = 4
+    num_layers = 28
     num_kv = 2  # K and V
-    num_blocks = 8  # Number of blocks for this request
-    block_size = 16  # Tokens per block
-    num_heads = 8  # Match Llama-3.1-8B-Instruct quantizer config
+    num_blocks = 128  # Number of blocks for this request
+    block_size = 32  # Tokens per block
+    num_heads = 4  # Match Llama-3.1-8B-Instruct quantizer config
     head_size = 128
     
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -67,14 +68,25 @@ def test_compression_with_worker_structure():
     print("Test 2: Compression with quantizer only")
     config_quantizer = CompressionConfig(
         enabled=True,
+        transformer_config={
+            "transform_type": "hadamard",
+            "seed": 0x3333,
+        },
         quantizer_config={
-            "model_name": "Llama-3.1-8B-Instruct",
-            "hybrid_ratio": 0.3,
+            "model_name": "Qwen2.5-7B-Instruct",
+            "hybrid_ratio": 0.9,
             "split_type": "head",
-            "high_key_max_value": 16,
-            "low_key_max_value": 12,
+            "high_key_max_value": 8,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 4,
             "axis_key": "channel",
             "axis_value": "token",
+        },
+        codec_config={
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1",
         },
         pipeline=["quantizer"],
     )
@@ -87,6 +99,7 @@ def test_compression_with_worker_structure():
     compressed_q = manager_quantizer.compress_all_layers(
         all_layers_data=all_layers_data,
         request_id="test_quantizer",
+        config=config_quantizer,
         metadata={"block_indices": block_indices},
     )
     
@@ -96,7 +109,7 @@ def test_compression_with_worker_structure():
         print(f"✓ Quantizer-only compression: {compressed_q.original_size} -> {compressed_q.compressed_size} bytes (ratio: {ratio_q:.2f}x)")
         
         # Decompress
-        decompressed_q = manager_quantizer.decompress_all_layers(compressed_q)
+        decompressed_q = manager_quantizer.decompress_all_layers(compressed_q, config=config_quantizer)
         if decompressed_q is not None:
             max_diff = (all_layers_data.float() - decompressed_q.float()).abs().max().item()
             print(f"✓ Decompression successful, max diff: {max_diff:.6f}")
@@ -115,17 +128,20 @@ def test_compression_with_worker_structure():
             "seed": 0x3333,
         },
         quantizer_config={
-            "model_name": "Llama-3.1-8B-Instruct",
-            "hybrid_ratio": 0.3,
+            "model_name": "Qwen2.5-7B-Instruct",
+            "hybrid_ratio": 0.9,
             "split_type": "head",
-            "high_key_max_value": 16,
-            "low_key_max_value": 12,
+            "high_key_max_value": 8,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 4,
             "axis_key": "channel",
             "axis_value": "token",
         },
         codec_config={
             "codec_type": "nvcomp",
-            "nvcomp_algorithm": "LZ4",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1",
         },
         pipeline=["transformer", "quantizer", "codec"],
     )
@@ -141,6 +157,7 @@ def test_compression_with_worker_structure():
         compressed_full = manager_full.compress_all_layers(
             all_layers_data=all_layers_data,
             request_id="test_full",
+            config=config_full,
             metadata={"block_indices": block_indices},
         )
         
@@ -154,7 +171,7 @@ def test_compression_with_worker_structure():
             print(f"✓ Metadata contains compressed_size: {compressed_full.metadata['compressed_size']}")
             
             # Decompress
-            decompressed_full = manager_full.decompress_all_layers(compressed_full)
+            decompressed_full = manager_full.decompress_all_layers(compressed_full, config=config_full)
             if decompressed_full is not None:
                 print(f"✓ Full pipeline decompression successful")
                 print(f"  Original shape: {all_layers_data.shape}")
@@ -197,13 +214,13 @@ def test_compression_with_worker_structure():
     print()
     print("All integration tests completed!")
 
-
 def test_metadata_serialization():
     """Test metadata serialization for NCCL transfer"""
     print("Testing metadata serialization...")
     print()
     
-    import pickle
+    # import pickle
+    from kvserve.manager.compression_manager import EasyDist
     
     # Create sample metadata (like what compress_all_layers generates)
     metadata = {
@@ -226,18 +243,17 @@ def test_metadata_serialization():
     }
     
     # Serialize
-    metadata_bytes = pickle.dumps(metadata)
-    print(f"✓ Metadata serialized: {len(metadata_bytes)} bytes")
+    metadata_tensor, metadata_size_tensor = EasyDist.pack_object(metadata)
+    print(f"✓ Metadata serialized: {metadata_size_tensor.item()} bytes")
     
     # Deserialize
-    metadata_restored = pickle.loads(metadata_bytes)
+    metadata_restored = EasyDist.unpack_object(metadata_tensor)
     print(f"✓ Metadata deserialized successfully")
     
-    # Verify
-    assert metadata_restored["request_id"] == "test_001"
-    assert metadata_restored["compressed_size"] == 893893
-    assert len(metadata_restored["all_quantization_params"]) == 32
-    print(f"✓ Metadata content verified")
+
+    EasyDist.compare(metadata_restored, metadata)
+
+    print(f"✓ Metadata content fully verified: metadata_restored == metadata")
     
     print()
 

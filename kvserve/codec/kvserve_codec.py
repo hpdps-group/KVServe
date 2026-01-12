@@ -86,7 +86,7 @@ class KVServeCodec(Codec):
         layer_id: int,
         tensor: torch.Tensor,
         **kwargs
-    ) -> bytes:
+    ) -> torch.Tensor:
         """
         Encode (compress) KV cache tensor to bytes
         
@@ -96,17 +96,16 @@ class KVServeCodec(Codec):
             **kwargs: Additional encoding parameters
             
         Returns:
-            Compressed bytes representation of the tensor
+            Compressed tensor 
         """
-        # Update codec parameters for every request
-        # Only update parameters for the first layer
-        if layer_id == 0:
-            self.update_params(**kwargs)
+        # Don't need to update parameters here because compression manager will handle it
+        # if layer_id == 0:
+        #     self.update_params(**kwargs)
     
         # Compress tensor to bytes
-        comp_bytes = self.codec.encode(tensor, **kwargs)
+        comp_tensor = self.codec.encode(tensor, **kwargs)
         
-        return comp_bytes
+        return comp_tensor
 
     def decode(
         self,
@@ -124,7 +123,7 @@ class KVServeCodec(Codec):
             layer_id: Layer ID for decoding
             compressed_data: Compressed bytes from encode()
             original_dtype: Original tensor dtype as string (e.g., "bfloat16", "float32")
-            original_shape: Original tensor shape as list (e.g., [2, 128, 32, 8, 128])
+            original_shape: Original tensor shape as list (e.g., [32, 2, 128, 32, 8, 128])
             device: Target device for decompressed tensor (e.g., "cuda:0", "cpu")
             **kwargs: Additional decoding parameters
             
