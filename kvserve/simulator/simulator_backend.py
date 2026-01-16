@@ -306,7 +306,6 @@ class SimulatorBackend:
                     request_id=req_id,
                     size_bytes=network_sim_size,
                     submit_time_ms=event.t_p_end,  # Exclude io_pack_ms
-                    arrival_time_ms=event.t0_arrival
                 )
                 completed_task = self.network_sim.simulate_transfer(task)
                 
@@ -428,11 +427,15 @@ class SimulatorBackend:
                 manifest_entry = manifest[shard_req_id]
                 src_blocks = manifest_entry.get('src_blocks', [])
                 
-                # Create MigratingRequest
-                migrating_req = MigratingRequest(
+                # Create Request and MigratingRequest
+                request = Request(
                     request_id=req_id,
+                    prompt=None,
                     prompt_token_ids=event.prompt_token_ids,
                     max_tokens=event.max_tokens,
+                )
+                migrating_req = MigratingRequest(
+                    req=request,
                     kv_block_indexes=src_blocks,
                     output_token_ids=[],
                     source_stage=EngineStage.PREFILL,
