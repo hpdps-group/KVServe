@@ -597,12 +597,16 @@ class CompressionManager:
             except Exception as e:
                 # Codec compression failed (e.g., OOM), skip compression
                 print(f"[CompressionManager] Codec compression FAILED for {request_id}, layer {layer_id}:")
-                # print(f"  Tensor info: {tensor_info}")
-                # print(f"  Error: {type(e).__name__}: {e}")
+                print(f"  Tensor shape: {tensor_data.shape}, dtype: {tensor_data.dtype}, device: {tensor_data.device}")
+                print(f"  Tensor size: {tensor_data.numel() * tensor_data.element_size() / (1024**2):.2f} MB")
+                print(f"  Error: {type(e).__name__}: {e}")
+                import traceback
+                print(f"  Traceback:")
+                traceback.print_exc()
                 # Fallback: Use uncompressed data
                 compressed_tensor = tensor_data.reshape(-1).view(torch.uint8).contiguous()
                 compression_metadata["codec_skipped"] = True
-                # compression_metadata["codec_applied"] = False
+                compression_metadata["codec_error"] = f"{type(e).__name__}: {str(e)}"
         else:
             # If no codec compression, just convert to bytes
             compressed_tensor = tensor_data.reshape(-1).view(torch.uint8).contiguous()
