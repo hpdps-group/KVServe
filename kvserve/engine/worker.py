@@ -33,22 +33,21 @@ from kvserve.engine.utils import (
     StepOutput,
 )
 from kvserve.manager.compression_manager import (
-    CompressedKVData, 
-    CompressionManager, 
-    CompressionConfig, 
-    EasyDist
+    CompressedKVData,
+    CompressionManager,
+    CompressionConfig,
+    EasyDist,
 )
-from kvserve.transformer import KVServeTransformer
-from kvserve.quantizer import KVServeQuantizer
-from kvserve.codec import KVServeCodec
 from kvserve.engine.logger import log_error, log_info, log_debug, log_warning
 
 
-@ray.remote(num_cpus=0, num_gpus=1)
+@ray.remote(num_cpus=0, num_gpus=1)  # Default for TP=1; override with .options(num_gpus=N) for TP>1
 class Worker:
     """
     Ray worker for PD separation
     Executes prefill or decode stage inference tasks
+    
+    Note: For tensor_parallel_size > 1, use Worker.options(num_gpus=N).remote(...)
     """
     
     def __init__(
@@ -59,6 +58,7 @@ class Worker:
         block_size: int = 16,
         dtype: str = "float16",
         tensor_parallel_size: int = 1,
+        tp_rank: int = 0,  # NEW: Rank within TP group
         seed: int = 1024,
         max_model_len: int = 32768,
         gpu_memory_utilization: float = 0.9,
@@ -79,7 +79,8 @@ class Worker:
             model_path: Path to model
             block_size: KV cache block size
             dtype: Model dtype
-            tensor_parallel_size: Tensor parallel size
+            tensor_parallel_size: Tensor parallel size (number of workers in TP group)
+            tp_rank: Rank within TP group (0 to tensor_parallel_size-1)
             seed: Random seed
             max_model_len: Maximum model sequence length
             gpu_memory_utilization: GPU memory utilization ratio
@@ -94,6 +95,7 @@ class Worker:
         self.block_size = block_size
         self.dtype = dtype
         self.tensor_parallel_size = tensor_parallel_size
+        self.tp_rank = tp_rank  # NEW: Store TP rank
         self.seed = seed
         self.max_model_len = max_model_len
         self.gpu_memory_utilization = gpu_memory_utilization
@@ -104,6 +106,7 @@ class Worker:
         self.nccl_world_size = world_size
         self.nccl_init_method = nccl_init_method
         self.nccl_pg_initialized = False
+        self.p2p_process_group = None  # Separate process group for P2P transfers
         
         # Model runner (vLLM v0)
         self.model_runner = None
@@ -140,6 +143,11 @@ class Worker:
     def _init_compression_manager(self):
         """Initialize compression manager with configured pipeline"""
         try:
+            from kvserve.manager.compression_manager import CompressionManager, CompressionConfig
+            from kvserve.transformer import KVServeTransformer
+            from kvserve.quantizer import KVServeQuantizer
+            from kvserve.codec import KVServeCodec
+            
             # Create compression config
             config = CompressionConfig(
                 enabled=self.compression_config.get("enabled", True),
@@ -190,6 +198,10 @@ class Worker:
         # CRITICAL: Set VLLM_USE_V1=0 to use V0 attention backends
         os.environ['VLLM_USE_V1'] = '0'
         
+        # CRITICAL: Disable CustomAllreduce for TP in Ray environment
+        # CustomAllreduce expects all GPUs visible, but Ray isolates GPUs per worker
+        os.environ['VLLM_USE_CUSTOM_ALLREDUCE'] = '0'
+        
         from vllm.config import (
             ModelConfig, ParallelConfig, SchedulerConfig,
             DeviceConfig, CacheConfig, LoadConfig, VllmConfig
@@ -219,6 +231,8 @@ class Worker:
             pipeline_parallel_size=1,
             tensor_parallel_size=self.tensor_parallel_size,
             worker_use_ray=False,
+            # CRITICAL: Disable custom allreduce in Ray TP (each worker sees 1 GPU)
+            disable_custom_all_reduce=True,
         )
         
         scheduler_config = SchedulerConfig(
@@ -248,9 +262,99 @@ class Worker:
             load_config=load_config,
         )
         
-        # Initialize global NCCL process group BEFORE vLLM initialization
+        # ========================================================================
+        # ✅ SOLUTION: Multiple Process Groups for TP + NCCL P2P
+        # ========================================================================
+        # Strategy:
+        # 1. Let vLLM initialize the default distributed group (for TP)
+        # 2. After vLLM init, create a separate process group for P2P transfers
+        # 3. Use the P2P group explicitly in send/recv operations
+        # ========================================================================
+        
+        # Initialize distributed environment for vLLM (this will be the default group)
+        def random_digits(n: int) -> str:
+            return ''.join([str(random.randint(0, 9)) for _ in range(n)])
+        
+        # Determine vLLM's distributed init method
+        # For TP>1: All workers in the same TP group use the SAME port
+        # Each TP group (Prefill vs Decode) uses different ports
+        if self.tensor_parallel_size > 1:
+            # Use stage-specific port for TP group
+            # Prefill and Decode use different ports
+            stage_offset = 0 if self.stage == EngineStage.PREFILL else 1
+            base_port = int(self.nccl_init_method.split(':')[-1]) if self.nccl_init_method else 29500
+            tp_port = base_port + 100 + stage_offset
+            vllm_init_method = f'tcp://localhost:{tp_port}'
+            log_info(f"[Worker-{self.worker_id}] TP group init: port={tp_port}, tp_rank={self.tp_rank}/{self.tensor_parallel_size}, stage={self.stage.value}")
+        else:
+            # TP=1: Use worker-specific port (no TP coordination needed)
+            worker_unique_id = self.global_rank if self.global_rank is not None else self.worker_id
+            vllm_init_method = f'tcp://localhost:{29600 + worker_unique_id}'
+            log_info(f"[Worker-{self.worker_id}] Single-worker init: {vllm_init_method}")
+        
+        # Initialize vLLM's distributed environment
+        # For TP>1: Each worker has a rank within the TP group
+        log_info(f"[Worker-{self.worker_id}] Calling init_worker_distributed_environment...")
+        log_info(f"[Worker-{self.worker_id}]   TP: rank={self.tp_rank}, size={vllm_config.parallel_config.tensor_parallel_size}")
+        log_info(f"[Worker-{self.worker_id}]   init_method={vllm_init_method}")
+        log_info(f"[Worker-{self.worker_id}]   local_rank=0 (Ray gives each worker 1 GPU as cuda:0)")
+        
+        init_worker_distributed_environment(
+            vllm_config=vllm_config,
+            rank=self.tp_rank,  # TP rank within the group
+            distributed_init_method=vllm_init_method,
+            local_rank=0,  # CRITICAL: Always 0 (Ray makes it cuda:0 via CUDA_VISIBLE_DEVICES)
+        )
+        log_info(f"[Worker-{self.worker_id}] ✓ vLLM distributed environment initialized")
+        
+        # Create model runner
+        log_info(f"[Worker-{self.worker_id}] Creating ModelRunner...")
+        self.model_runner = ModelRunner(
+            vllm_config=vllm_config,
+            kv_cache_dtype=cache_config.cache_dtype,
+            is_driver_worker=True,
+        )
+        log_info(f"[Worker-{self.worker_id}] ✓ ModelRunner created")
+        
+        # Load model
+        log_info(f"[Worker-{self.worker_id}] Loading model...")
+        self.model_runner.load_model()
+        log_info(f"[Worker-{self.worker_id}] ✓ Model loaded")
+        
+        # Store configs
+        self.model_config = model_config
+        self.cache_config = cache_config
+        self.vllm_model_config = model_config
+        self.parallel_config = parallel_config
+        
+        torch.cuda.synchronize()
+        
+        # ========================================================================
+        # Initialize P2P Process Group (after vLLM init)
+        # ========================================================================
+        # Now that vLLM has initialized (and possibly created a TP group),
+        # we can create a separate process group for P2P KV transfers
+        # ========================================================================
         if self.global_rank is not None and self.nccl_world_size is not None and self.nccl_init_method is not None:
-            if not torch.distributed.is_initialized():
+            self._init_p2p_process_group()
+    
+    def _init_p2p_process_group(self):
+        """Initialize a separate process group for P2P KV transfers"""
+        try:
+            # Check if default group exists (from vLLM TP init)
+            if torch.distributed.is_initialized():
+                log_info(f"[Worker-{self.worker_id}] Default group already initialized (by vLLM TP)")
+                # Create a new group for P2P transfers
+                # All workers participate in this group
+                all_ranks = list(range(self.nccl_world_size))
+                self.p2p_process_group = torch.distributed.new_group(
+                    ranks=all_ranks,
+                    backend='nccl',
+                )
+                self.nccl_pg_initialized = True
+                log_info(f"[Worker-{self.worker_id}] ✅ Created P2P process group (rank={self.global_rank}, world={self.nccl_world_size})")
+            else:
+                # No default group, initialize one for P2P
                 os.environ['MASTER_ADDR'] = self.nccl_init_method.split('//')[1].split(':')[0]
                 os.environ['MASTER_PORT'] = self.nccl_init_method.split(':')[-1]
                 os.environ['RANK'] = str(self.global_rank)
@@ -266,37 +370,13 @@ class Worker:
                     rank=self.global_rank,
                     world_size=self.nccl_world_size,
                 )
-                
+                # Default group is the P2P group
+                self.p2p_process_group = torch.distributed.group.WORLD
                 self.nccl_pg_initialized = True
-        
-        # Initialize distributed environment
-        def random_digits(n: int) -> str:
-            return ''.join([str(random.randint(0, 9)) for _ in range(n)])
-        
-        init_worker_distributed_environment(
-            vllm_config=vllm_config,
-            rank=self.global_rank if self.global_rank is not None else 0,
-            distributed_init_method=self.nccl_init_method if self.nccl_init_method is not None else f'tcp://localhost:{int(random_digits(4))+int(self.gpu_id)}',
-            local_rank=self.global_rank if self.global_rank is not None else 0,
-        )
-        
-        # Create model runner
-        self.model_runner = ModelRunner(
-            vllm_config=vllm_config,
-            kv_cache_dtype=cache_config.cache_dtype,
-            is_driver_worker=True,
-        )
-        
-        # Load model
-        self.model_runner.load_model()
-        
-        # Store configs
-        self.model_config = model_config
-        self.cache_config = cache_config
-        self.vllm_model_config = model_config
-        self.parallel_config = parallel_config
-        
-        torch.cuda.synchronize()
+                log_info(f"[Worker-{self.worker_id}] ✅ Initialized default group for P2P")
+        except Exception as e:
+            log_error(f"[Worker-{self.worker_id}] Failed to init P2P group: {e}")
+            self.nccl_pg_initialized = False
     
     def profile_num_available_blocks(self) -> Dict[str, int]:
         """
@@ -354,17 +434,20 @@ class Worker:
                                self.model_config.hf_config.num_attention_heads)
         head_size = self.model_config.hf_config.hidden_size // self.model_config.hf_config.num_attention_heads
         
+        # For TP > 1, KV heads are sharded across devices
+        num_kv_heads_per_shard = num_kv_heads // self.tensor_parallel_size
+        
         bytes_per_element = 2 if self.dtype in ["float16", "bfloat16"] else 4
         
         block_size_bytes = (
-            2 * self.block_size * num_kv_heads * head_size * bytes_per_element * num_layers
+            2 * self.block_size * num_kv_heads_per_shard * head_size * bytes_per_element * num_layers
         )
         
         num_gpu_blocks = int(kv_cache_memory / block_size_bytes)
         num_cpu_blocks = max(100, num_gpu_blocks // 10)
         
         # ✅ Detailed logging for debugging
-        log_info(f"[Worker {self.worker_id}] GPU Memory Profile:")
+        log_info(f"[Worker {self.worker_id}] GPU Memory Profile (TP={self.tensor_parallel_size}):")
         log_info(f"  Total: {total_memory / GB:.2f} GB")
         log_info(f"  Model + Overhead: {model_memory / GB:.2f} GB")
         log_info(f"  Free after model: {free_memory / GB:.2f} GB")
@@ -375,6 +458,7 @@ class Worker:
         log_info(f"  Activation Used: {activation_required / GB:.2f} GB")
         log_info(f"  Budget for Model+KV: {budget_for_model_kv / GB:.2f} GB")
         log_info(f"  KV Cache Allocation: {kv_cache_memory / GB:.2f} GB")
+        log_info(f"  KV heads per shard: {num_kv_heads_per_shard} (total: {num_kv_heads})")
         log_info(f"  Block size: {block_size_bytes / 1024:.2f} KB")
         log_info(f"  → GPU blocks: {num_gpu_blocks}, CPU blocks: {num_cpu_blocks}")
         
@@ -666,48 +750,130 @@ class Worker:
         for layer_idx, layer_kv in enumerate(self.kv_cache):
             layer_kv[:, block_idx_tensor, :, :, :] = kv_data[layer_idx]
     
+    def extract_and_compress_kv(self, block_indices: List[int], request_id: str) -> Dict[str, Any]:
+        """
+        Extract KV blocks and optionally compress (for SIMULATION mode)
+        Includes internal timing for compression
+        
+        Args:
+            block_indices: List of block indices to extract
+            request_id: Request ID for compression tracking
+            
+        Returns:
+            Dict with compressed_kv/kv_data, bytes, compression_time_ms, extract_time_ms
+        """
+        import time
+        
+        # Extract KV
+        t_extract_start = time.time()
+        kv_data = self.extract_kv_blocks(block_indices)
+        extract_time_ms = (time.time() - t_extract_start) * 1000.0
+        
+        # Compress if enabled
+        if self.compression_manager:
+            t_compress_start = time.time()
+            compressed = self.compression_manager.compress_all_layers(
+                all_layers_data=kv_data,
+                request_id=request_id,
+                metadata={"block_indices": block_indices},
+            )
+            compression_time_ms = (time.time() - t_compress_start) * 1000.0
+            
+            if compressed:
+                # Move compressed tensor to CPU to avoid GPU memory pressure in pickling/simulation
+                if hasattr(compressed, 'compressed_tensor') and compressed.compressed_tensor.device.type == 'cuda':
+                    compressed.compressed_tensor = compressed.compressed_tensor.cpu()
+                return {
+                    'compressed_kv': compressed,
+                    'bytes': compressed.compressed_size,
+                    'original_bytes': compressed.original_size,
+                    'compression_time_ms': compression_time_ms,
+                    'extract_time_ms': extract_time_ms,
+                }
+            else:
+                # Compression skipped - move to CPU before returning
+                log_warning(f"[Worker-{self.worker_id}] Compression returned None for {request_id}")
+                return {
+                    'kv_data': kv_data.cpu(),  # Move to CPU
+                    'bytes': kv_data.numel() * kv_data.element_size(),
+                    'compression_time_ms': 0.0,
+                    'extract_time_ms': extract_time_ms,
+                }
+        else:
+            # No compression - move to CPU before returning
+            return {
+                'kv_data': kv_data.cpu(),  # Move to CPU
+                'bytes': kv_data.numel() * kv_data.element_size(),
+                'compression_time_ms': 0.0,
+                'extract_time_ms': extract_time_ms,
+            }
+    
+    def decompress_and_write_kv(self, compressed_data: Any, dst_blocks: List[int]) -> Dict[str, Any]:
+        """
+        Decompress and write KV blocks (for SIMULATION mode)
+        Includes internal timing for decompression
+        
+        Args:
+            compressed_data: CompressedKVData or raw kv_data tensor (on CPU)
+            dst_blocks: Destination block indices
+            
+        Returns:
+            Dict with decompression_time_ms, write_time_ms
+        """
+        import time
+        import torch
+        
+        # Decompress if needed
+        t_decompress_start = time.time()
+        if self.compression_manager and hasattr(compressed_data, 'compressed_tensor'):
+            # Ensure compressed tensor on GPU for decompression
+            if compressed_data.compressed_tensor.device.type == 'cpu':
+                compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
+            
+            kv_data = self.compression_manager.decompress_all_layers(compressed_data)
+            decompression_time_ms = (time.time() - t_decompress_start) * 1000.0
+        else:
+            # Already decompressed - move to GPU if needed
+            kv_data = compressed_data
+            if kv_data.device.type == 'cpu':
+                kv_data = kv_data.to(self.device, non_blocking=True)
+            decompression_time_ms = 0.0
+        
+        # Write to KV cache (kv_data should now be on GPU)
+        t_write_start = time.time()
+        self.write_kv_blocks(dst_blocks, kv_data)
+        write_time_ms = (time.time() - t_write_start) * 1000.0
+        
+        # Clear kv_data after writing to release memory
+        del kv_data
+        torch.cuda.empty_cache()
+        
+        return {
+            'decompression_time_ms': decompression_time_ms,
+            'write_time_ms': write_time_ms,
+        }
+    
     def p2p_send_kv(self, dst_rank: int, block_indices: List[int]) -> Dict[str, Any]:
-        """Send KV cache blocks via PyTorch P2P"""
+        """
+        Send KV cache blocks via PyTorch P2P
+        
+        TP Support: When tensor_parallel_size > 1, self.kv_cache contains sharded
+        KV data (num_heads = total_heads / TP). The transfer automatically sends
+        the sharded data, and destination worker will receive matching shards.
+        """
         if not self.nccl_pg_initialized:
             return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
         
         try:
-            # Extract all layers KV data using extract_kv_blocks
-            kv_data = self.extract_kv_blocks(block_indices)
+            block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
             
-            # Prepare metadata (shape and dtype)
-            metadata = {
-                "shape": kv_data.shape,
-                "dtype": str(kv_data.dtype).replace("torch.", ""),
-            }
+            total_bytes = 0
+            for layer_kv in self.kv_cache:
+                layer_data = layer_kv[:, block_idx_tensor, :, :, :].contiguous()
+                torch.distributed.send(layer_data, dst=dst_rank, group=self.p2p_process_group)
+                total_bytes += layer_data.numel() * layer_data.element_size()
             
-            kv_data = kv_data.reshape(-1).view(torch.uint8)
-            metadata["size"] = kv_data.numel() * kv_data.element_size()
-
-            metadata_tensor, metadata_size_tensor = EasyDist.pack_object(metadata)
-            
-            # 1. Send metadata size
-            torch.distributed.send(metadata_size_tensor, dst=dst_rank)
-            
-            # 2. Send metadata
-            torch.distributed.send(metadata_tensor, dst=dst_rank)
-            
-            # 3. Send the entire KV tensor at once
-            torch.distributed.send(kv_data, dst=dst_rank)
-            
-            total_bytes = (
-                metadata_size_tensor.element_size() + 
-                metadata_tensor.numel() * metadata_tensor.element_size() + 
-                kv_data.numel() * kv_data.element_size()
-            )
-            
-            # Release memory
-            del kv_data
-            del metadata_tensor
-            del metadata_size_tensor
-            gc.collect()
-            torch.cuda.empty_cache()
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             return {"bytes": total_bytes, "blocks": len(block_indices)}
         except Exception as e:
             error_msg = f"NCCL send failed: {type(e).__name__}: {str(e)}"
@@ -715,48 +881,35 @@ class Worker:
             return {"error": error_msg, "bytes": 0, "blocks": 0}
     
     def p2p_recv_kv(self, src_rank: int, block_indices: List[int]) -> Dict[str, Any]:
-        """Receive KV cache blocks via PyTorch P2P"""
+        """
+        Receive KV cache blocks via PyTorch P2P
+        
+        TP Support: Receives sharded KV data matching the sender's TP configuration.
+        Ensure both sender and receiver use the same tensor_parallel_size.
+        """
         if not self.nccl_pg_initialized:
             return {"error": "Global NCCL not initialized", "bytes": 0, "blocks": 0}
         
         try:
+            block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
             
-            # 1. Receive metadata size(int64)
-            metadata_size_tensor = torch.empty(1, dtype=torch.int64, device=self.device)
-            torch.distributed.recv(metadata_size_tensor, src=src_rank)
-            metadata_size = metadata_size_tensor.item()
+            num_kv = 2
+            num_blocks = len(block_indices)
+            block_size = self.kv_cache[0].shape[2]
+            num_heads = self.kv_cache[0].shape[3]
+            head_size = self.kv_cache[0].shape[4]
+            kv_dtype = self.kv_cache[0].dtype
             
-            # 2. Receive metadata(uint8)
-            metadata_tensor = torch.empty(metadata_size, dtype=torch.uint8, device=self.device)
-            torch.distributed.recv(metadata_tensor, src=src_rank)
+            layer_shape = (num_kv, num_blocks, block_size, num_heads, head_size)
+            total_bytes = 0
             
-            # Unpack metadata
-            metadata = EasyDist.unpack_object(metadata_tensor)
-            kv_shape = metadata["shape"]
-            kv_dtype = getattr(torch, metadata["dtype"])
-            kv_size = metadata["size"]
-
-            # 3. Receive all layers at once(uint8)
-            kv_data = torch.empty(kv_size, dtype=torch.uint8, device=self.device)
-            torch.distributed.recv(kv_data, src=src_rank)
+            for layer_idx, layer_kv in enumerate(self.kv_cache):
+                layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
+                torch.distributed.recv(layer_data, src=src_rank, group=self.p2p_process_group)
+                layer_kv[:, block_idx_tensor, :, :, :] = layer_data
+                total_bytes += layer_data.numel() * layer_data.element_size()
             
-            # Write to cache using write_kv_blocks
-            kv_data = kv_data.view(kv_dtype).reshape(kv_shape)
-            self.write_kv_blocks(block_indices, kv_data)
-            
-            total_bytes = (
-                metadata_size_tensor.element_size() + 
-                metadata_tensor.numel() * metadata_tensor.element_size() + 
-                kv_data.numel() * kv_data.element_size()
-            )
-            
-            # Release memory
-            del kv_data
-            del metadata_tensor
-            del metadata_size_tensor
-            gc.collect()
-            torch.cuda.empty_cache()
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             return {"bytes": total_bytes, "blocks": len(block_indices)}
         except Exception as e:
             error_msg = f"NCCL recv failed: {type(e).__name__}: {str(e)}"
@@ -808,10 +961,28 @@ class Worker:
                 src_blocks
             )
             
-            # ✅ STEP 2: Immediately start receiving (NCCL will sync)            
-            recv_result = self.p2p_recv_kv(src_rank, dst_blocks)
+            # ✅ STEP 2: Immediately start receiving (NCCL will sync)
+            # This coordinates the transfer more efficiently
+            block_idx_tensor = torch.tensor(dst_blocks, dtype=torch.long, device=self.device)
             
-            # torch.cuda.synchronize()
+            num_kv = 2
+            num_blocks = len(dst_blocks)
+            block_size = self.kv_cache[0].shape[2]
+            num_heads = self.kv_cache[0].shape[3]
+            head_size = self.kv_cache[0].shape[4]
+            kv_dtype = self.kv_cache[0].dtype
+            
+            layer_shape = (num_kv, num_blocks, block_size, num_heads, head_size)
+            total_bytes = 0
+            
+            # Receive layer by layer (zero-copy optimization)
+            for layer_idx, layer_kv in enumerate(self.kv_cache):
+                layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
+                torch.distributed.recv(layer_data, src=src_rank, group=self.p2p_process_group)
+                layer_kv[:, block_idx_tensor, :, :, :] = layer_data
+                total_bytes += layer_data.numel() * layer_data.element_size()
+            
+            torch.cuda.synchronize()
             
             # Wait for send to complete (should already be done due to NCCL sync)
             send_result = ray.get(send_future)
@@ -821,7 +992,7 @@ class Worker:
             if "error" in send_result:
                 return {"error": f"Send failed: {send_result['error']}", "bytes": 0, "blocks": 0}
             
-            return {**recv_result, "elapsed": elapsed}
+            return {"bytes": total_bytes, "blocks": len(dst_blocks), "elapsed": elapsed}
             
         except Exception as e:
             error_msg = f"Coordinated transfer failed: {type(e).__name__}: {str(e)}"
@@ -1119,6 +1290,10 @@ class Worker:
             import traceback
             traceback.print_exc()
             return {"error": error_msg, "bytes": 0, "blocks": 0}
+
+    # =========================================================================
+    # 🚚 Ray-based KV transfer (CPU hop) for TP>1 when NCCL P2P is unavailable
+    # =========================================================================
     
     def p2p_transfer_kv_async(
         self,
@@ -1186,7 +1361,7 @@ class Worker:
                 # Receive layer by layer
                 for layer_idx, layer_kv in enumerate(self.kv_cache):
                     layer_data = torch.empty(layer_shape, dtype=kv_dtype, device=self.device)
-                    torch.distributed.recv(layer_data, src=src_rank)
+                    torch.distributed.recv(layer_data, src=src_rank, group=self.p2p_process_group)
                     layer_kv[:, block_idx_tensor, :, :, :] = layer_data
                     total_bytes += layer_data.numel() * layer_data.element_size()
                 
@@ -1252,7 +1427,7 @@ class Worker:
                 total_bytes = 0
                 for layer_idx, layer_kv in enumerate(self.kv_cache):
                     layer_data = layer_kv[:, block_idx_tensor, :, :, :].contiguous()
-                    torch.distributed.send(layer_data, dst=dst_rank)
+                    torch.distributed.send(layer_data, dst=dst_rank, group=self.p2p_process_group)
                     total_bytes += layer_data.numel() * layer_data.element_size()
             
             return {"bytes": total_bytes, "blocks": len(block_indices)}
