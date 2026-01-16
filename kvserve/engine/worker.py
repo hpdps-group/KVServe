@@ -772,9 +772,19 @@ class Worker:
         # Compress if enabled
         if self.compression_manager:
             t_compress_start = time.time()
+            # Create compression config (following remote API)
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
             compressed = self.compression_manager.compress_all_layers(
                 all_layers_data=kv_data,
                 request_id=request_id,
+                config=config,
                 metadata={"block_indices": block_indices},
             )
             compression_time_ms = (time.time() - t_compress_start) * 1000.0
@@ -830,7 +840,16 @@ class Worker:
             if compressed_data.compressed_tensor.device.type == 'cpu':
                 compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
             
-            kv_data = self.compression_manager.decompress_all_layers(compressed_data)
+            # Create compression config (following remote API)
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
+            kv_data = self.compression_manager.decompress_all_layers(compressed_data, config)
             decompression_time_ms = (time.time() - t_decompress_start) * 1000.0
         else:
             # Already decompressed - move to GPU if needed
