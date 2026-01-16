@@ -599,8 +599,8 @@ class CompressionManager:
                 print(f"[CompressionManager] Codec compression FAILED for {request_id}, layer {layer_id}:")
                 # print(f"  Tensor info: {tensor_info}")
                 # print(f"  Error: {type(e).__name__}: {e}")
-                # print(f"  Fallback: Using uncompressed data ({len(original_bytes)} bytes)")
-                # compressed_bytes = original_bytes
+                # Fallback: Use uncompressed data
+                compressed_tensor = tensor_data.reshape(-1).view(torch.uint8).contiguous()
                 compression_metadata["codec_skipped"] = True
                 # compression_metadata["codec_applied"] = False
         else:
