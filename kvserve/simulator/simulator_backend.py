@@ -332,7 +332,7 @@ class SimulatorBackend:
         self.prefill_engine.kv_transfer_manager.save_simulation_manifest(manifest_file)
         
         log_info(f"[Simulator] Cleaning up Prefill engine...")
-        await self.prefill_engine.shutdown()
+        # Note: Engine cleanup is handled automatically by Ray
         
         log_info(f"[Simulator] ✓ Prefill complete, results saved to {output_file}")
         return list(events.values())
@@ -514,7 +514,7 @@ class SimulatorBackend:
             pickle.dump({'events': events}, f)
         
         log_info(f"[Simulator] Cleaning up Decode engine...")
-        await self.decode_engine.shutdown()
+        # Note: Engine cleanup is handled automatically by Ray
         
         log_info(f"[Simulator] ✓ Decode complete, results saved to {output_file}")
         return list(events.values())
