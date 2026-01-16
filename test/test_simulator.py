@@ -13,6 +13,15 @@ import os
 import sys
 from typing import List, Optional
 
+# Add project root to Python path for module imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Disable proxy to avoid connection issues with HuggingFace/local models
+os.environ.pop('http_proxy', None)
+os.environ.pop('https_proxy', None)
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('HTTPS_PROXY', None)
+
 
 def load_lmeval_prompts(task_name: str, num_samples: int = 50) -> List[str]:
     """
@@ -129,7 +138,8 @@ async def worker_prefill(
     
     print(f"[INFO] [Prefill Worker] Starting prefill with TP={tp}")
     
-    model_path = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # Use local model path instead of downloading from HuggingFace
+    model_path = "/root/ssd/mxy/models/Llama-3.1-8B-Instruct"
     
     # Load prompts
     if lmeval_task:
@@ -183,7 +193,8 @@ async def worker_decode(
     
     print(f"[INFO] [Decode Worker] Starting decode with TP={tp}")
     
-    model_path = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # Use local model path instead of downloading from HuggingFace
+    model_path = "/root/ssd/mxy/models/Llama-3.1-8B-Instruct"
     
     # Create simulator
     sim = SimulatorBackend(

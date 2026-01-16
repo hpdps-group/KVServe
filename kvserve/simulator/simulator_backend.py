@@ -152,8 +152,7 @@ class SimulatorBackend:
         """
         from kvserve.engine.stage_engine import PrefillEngine
         from kvserve.engine.kv_transfer import KVTransferManager, TransferMethod
-        from kvserve.engine.utils import Request
-        from kvserve.engine.backend import EngineStage
+        from kvserve.engine.utils import Request, EngineStage
         from transformers import AutoTokenizer
         import ray
         
@@ -349,8 +348,7 @@ class SimulatorBackend:
         This should be called in a separate process for TP>1.
         """
         from kvserve.engine.stage_engine import DecodeEngine
-        from kvserve.engine.utils import Request, MigratingRequest
-        from kvserve.engine.backend import EngineStage
+        from kvserve.engine.utils import Request, MigratingRequest, EngineStage
         import ray
         
         log_info(f"[Simulator] Phase 2: Running Decode stage...")

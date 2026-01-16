@@ -89,7 +89,19 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
             # Execute model (vLLM 0.10.1)
             # KV cache is already bound to Attention layers via bind_kv_cache()
             # vLLM accesses it directly through Attention.kv_cache[virtual_engine]
-            seq_outs = worker.model_runner.execute_model(model_input, [], None)
+            # 
+            # For TP>1: Only rank 0 will produce sampling outputs
+            # Non-rank-0 workers participate in forward pass but may fail at sampling
+            try:
+                seq_outs = worker.model_runner.execute_model(model_input, [], None)
+            except AssertionError as e:
+                # For TP>1, non-rank-0 workers may fail at sampling (logits is None)
+                # This is expected behavior - only rank 0 produces outputs
+                if worker.tp_rank > 0:
+                    log_debug(f"[Worker-{worker.worker_id}] TP rank {worker.tp_rank} skipped sampling (expected)")
+                    seq_outs = []  # Return empty for non-rank-0
+                else:
+                    raise  # Rank 0 should not fail
             
             # Extract generated tokens
             generated_tokens = []
@@ -261,13 +273,24 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
             
             # Execute model (vLLM 0.10.1)
             # KV cache is already bound to Attention layers via bind_kv_cache()
+            # For TP>1: Only rank 0 will produce sampling outputs
+            step_start_time = time.time()
             try:
                 seq_outs = worker.model_runner.execute_model(model_input, [], None)
+            except AssertionError as e:
+                # For TP>1, non-rank-0 workers may fail at sampling (logits is None)
+                if worker.tp_rank > 0:
+                    log_debug(f"[Worker-{worker.worker_id}] TP rank {worker.tp_rank} skipped sampling (expected)")
+                    return []  # Return empty for non-rank-0
+                else:
+                    log_error(f"[Worker] Error in execute_model: {e}")
+                    raise
             except Exception as e:
                 log_error(f"[Worker] Error in execute_model: {e}")
                 import traceback
                 traceback.print_exc()
                 return []
+            step_end_time = time.time()
             
             # Extract generated tokens
             generated_tokens = []
@@ -319,6 +342,9 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                     request_id=req_id,
                     output_token_ids=output_tokens,
                     finished=finished,
+                    step_start_time=step_start_time,
+                    step_end_time=step_end_time,
+                    num_output_tokens=1,
                 )
                 outputs.append(output)
             

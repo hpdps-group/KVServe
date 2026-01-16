@@ -202,18 +202,48 @@ class BaseStageEngine:
         """Initialize workers"""
         log_info(f"[{self.stage.value}Engine] Initializing {self.num_workers} workers...")
         
-        # First, initialize all workers and load models
-        for worker_id in range(self.num_workers):
-            # Calculate global rank
-            global_rank = worker_id if self.stage == EngineStage.PREFILL else worker_id + self.num_workers
+        # ========================================================================
+        # Create workers for TP group
+        # ========================================================================
+        # For TP>1: Create tensor_parallel_size workers, each with 1 GPU
+        # For TP=1: Create num_workers workers (for load balancing)
+        # ========================================================================
+        num_workers_to_create = self.tensor_parallel_size if self.tensor_parallel_size > 1 else self.num_workers
+        
+        log_info(f"[{self.stage.value}Engine] Creating {num_workers_to_create} workers (TP={self.tensor_parallel_size})")
+        
+        # ========================================================================
+        # CRITICAL: Create all workers first, THEN initialize in parallel
+        # This avoids deadlock when TP>1 (workers wait for each other to join TP group)
+        # ========================================================================
+        
+        # Step 1: Create all worker actors
+        for tp_rank in range(num_workers_to_create):
+            worker_id = tp_rank
             
-            worker = Worker.remote(
+            # Calculate global rank for P2P group
+            if self.stage == EngineStage.PREFILL:
+                global_rank = tp_rank
+            else:
+                # Decode workers come after prefill workers in the SAME process
+                # But in SIMULATION mode (nccl_world_size == tensor_parallel_size),
+                # prefill and decode run separately, so decode starts from rank 0
+                if self.nccl_world_size == self.tensor_parallel_size:
+                    # SIMULATION mode: decode in separate process
+                    global_rank = tp_rank
+                else:
+                    # Normal PD separation: decode after prefill
+                    global_rank = num_workers_to_create + tp_rank
+            
+            # Allocate GPUs: 1 GPU per worker (workers form TP group)
+            worker = Worker.options(num_gpus=1).remote(
                 worker_id=worker_id,
                 stage=self.stage,
                 model_path=self.model_path,
                 block_size=self.block_size,
                 dtype=self.dtype,
                 tensor_parallel_size=self.tensor_parallel_size,
+                tp_rank=tp_rank,  # NEW: Rank within TP group
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 activation_memory_gb=self.activation_memory_gb,
                 global_rank=global_rank,
@@ -224,10 +254,15 @@ class BaseStageEngine:
             )
             
             self.workers.append(worker)
-            
-            # Initialize worker
-            await worker.ready.remote()
-            await worker.init_model.remote()
+            log_info(f"[{self.stage.value}Engine] Created Worker {worker_id}: tp_rank={tp_rank}, global_rank={global_rank}")
+        
+        # Step 2: Initialize all workers in parallel (CRITICAL for TP>1)
+        log_info(f"[{self.stage.value}Engine] Initializing {len(self.workers)} workers in parallel...")
+        await asyncio.gather(*[worker.ready.remote() for worker in self.workers])
+        log_info(f"[{self.stage.value}Engine] All workers ready, loading models...")
+        
+        await asyncio.gather(*[worker.init_model.remote() for worker in self.workers])
+        log_info(f"[{self.stage.value}Engine] All workers initialized")
         
         # ========================================================================
         # ✅ DYNAMIC KV CACHE SIZING (vLLM standard approach)
@@ -256,7 +291,19 @@ class BaseStageEngine:
         
         # Now initialize KV cache with profiled values (use min for consistency)
         for worker_id, worker in enumerate(self.workers):
-            global_rank = worker_id if self.stage == EngineStage.PREFILL else worker_id + self.num_workers
+            # Calculate global rank consistently with worker creation logic
+            if self.stage == EngineStage.PREFILL:
+                global_rank = worker_id
+            else:
+                # Decode workers come after prefill workers in the SAME process
+                # But in SIMULATION mode (nccl_world_size == tensor_parallel_size),
+                # prefill and decode run separately, so decode starts from rank 0
+                if self.nccl_world_size == self.tensor_parallel_size:
+                    # SIMULATION mode: decode in separate process
+                    global_rank = worker_id
+                else:
+                    # Normal PD separation: decode after prefill
+                    global_rank = self.num_workers + worker_id
             
             # Use min values to ensure consistency across workers
             await worker.init_kvcache.remote(min_gpu_blocks, min_cpu_blocks)
@@ -378,17 +425,29 @@ class PrefillEngine(BaseStageEngine):
             if req.prefill_start_time is None:
                 req.prefill_start_time = start_time
         
-        # Get worker
-        worker = self.get_next_worker()
-        if not worker:
-            return
-        
         # Execute prefill
         log_debug(f"[PrefillEngine] Executing prefill for {len(batched_requests.requests)} requests")
-        outputs, expanded_tokens_map = await worker.step_prefill.remote(
-            batched_requests,
-            kv_block_tables
-        )
+        
+        # ⚠️ CRITICAL FOR TP>1: ALL workers must be called simultaneously
+        # Ray remote actors require explicit calls on each worker
+        # vLLM's NCCL will then synchronize them internally
+        if self.tensor_parallel_size > 1:
+            # TP>1: Call ALL workers in parallel
+            results = await asyncio.gather(*[
+                worker.step_prefill.remote(batched_requests, kv_block_tables)
+                for worker in self.workers
+            ])
+            # All workers return same outputs (synchronized via NCCL)
+            outputs, expanded_tokens_map = results[0]
+        else:
+            # TP=1: Single worker
+            worker = self.get_next_worker()
+            if not worker:
+                return
+            outputs, expanded_tokens_map = await worker.step_prefill.remote(
+                batched_requests,
+                kv_block_tables
+            )
         
         log_debug(f"[PrefillEngine] Prefill completed: {len(outputs)} outputs, expanded_tokens_map keys: {list(expanded_tokens_map.keys())}")
         
@@ -420,6 +479,45 @@ class PrefillEngine(BaseStageEngine):
                 target_stage=EngineStage.DECODING,
             )
             
+            # In SIMULATION mode, save KV to file immediately
+            if self.kv_transfer_manager and hasattr(self.kv_transfer_manager, 'transfer_method'):
+                from kvserve.engine.kv_transfer import TransferMethod
+                if self.kv_transfer_manager.transfer_method == TransferMethod.SIMULATION:
+                    # For TP>1: Save KV from ALL workers (each worker has a shard)
+                    # For TP=1: Save from single worker
+                    workers_to_save = self.workers if self.tensor_parallel_size > 1 else [self.get_next_worker()]
+                    
+                    # Parallel save KV from all workers
+                    async def save_kv_shard(worker_idx, worker):
+                        if not worker:
+                            return False
+                        src_rank = await worker.get_global_rank.remote()
+                        # For TP>1, append tp_rank to request_id to distinguish shards
+                        req_id_for_file = f"{request.request_id}_tp{worker_idx}" if self.tensor_parallel_size > 1 else request.request_id
+                        
+                        # Call transfer to save KV to file
+                        success = await self.kv_transfer_manager.transfer_kv_cache(
+                            request_id=req_id_for_file,
+                            src_rank=src_rank,
+                            dst_rank=src_rank,  # Placeholder
+                            src_blocks=migrating_req.kv_block_indexes,
+                            dst_blocks=migrating_req.kv_block_indexes,
+                        )
+                        if success:
+                            log_debug(f"[PrefillEngine] Saved KV shard {worker_idx} to file for {request.request_id}")
+                        else:
+                            log_warning(f"[PrefillEngine] Failed to save KV shard {worker_idx} for {request.request_id}")
+                        return success
+                    
+                    # Save all shards in parallel
+                    results = await asyncio.gather(*[
+                        save_kv_shard(worker_idx, worker) 
+                        for worker_idx, worker in enumerate(workers_to_save)
+                    ])
+                    # Check if all saves succeeded
+                    if not all(results):
+                        log_warning(f"[PrefillEngine] Some KV shards failed to save for {request.request_id}")
+            
             log_debug(f"[PrefillEngine] Sending request {request.request_id} to decode (output_tokens={len(migrating_req.output_token_ids or [])})")
             await self.prefill_decode_bridge_queue.put(migrating_req)
             
@@ -441,6 +539,8 @@ class DecodeEngine(BaseStageEngine):
         self.prefill_decode_bridge_queue = prefill_decode_bridge_queue
         self.max_batch_size = max_batch_size
         self.output_callback = None
+        # Accumulate pure decode compute time (seconds) across the whole run
+        self.total_decode_compute_time = 0.0
         # Requests waiting for GPU blocks (do not count toward active capacity)
         self.mem_wait_queue = deque()  # type: ignore[var-annotated]
         # For requests that haven't allocated blocks yet (need migrating metadata)
@@ -633,6 +733,8 @@ class DecodeEngine(BaseStageEngine):
     async def _start_async_transfer(self, request: Request, migrating_req):
         """
         🚀 TRUE ASYNC: Start transfer and return immediately (non-blocking)
+        
+        TP Support: For TP>1, transfer all shards in parallel
         """
         if not self.kv_transfer_manager or not migrating_req.kv_block_indexes:
             # No transfer needed
@@ -646,7 +748,44 @@ class DecodeEngine(BaseStageEngine):
             self.block_manager.allocate_blocks(request, num_blocks=blocks_needed)
             dst_blocks = self.block_manager.get_block_table(request.request_id)
             
-            # Get worker
+            # ========================================================================
+            # TP Support: Transfer all shards
+            # ========================================================================
+            # For TP>1: All workers in a stage share the same request
+            # Transfer: Prefill worker i → Decode worker i (for each TP rank)
+            # ========================================================================
+            if self.tensor_parallel_size > 1:
+                # Transfer all shards in parallel
+                transfer_tasks = []
+                for tp_rank in range(len(self.workers)):
+                    src_rank = tp_rank  # Prefill worker with this TP rank
+                    dst_rank = len(self.workers) + tp_rank  # Decode worker with same TP rank
+                    
+                    result = await self.kv_transfer_manager.transfer_kv_cache_async(
+                        request_id=f"{request.request_id}_shard{tp_rank}",
+                        src_rank=src_rank,
+                        dst_rank=dst_rank,
+                        src_blocks=migrating_req.kv_block_indexes,
+                        dst_blocks=dst_blocks,
+                    )
+                    transfer_tasks.append(result)
+                
+                # Use the first worker as the assigned worker (for compatibility)
+                request.assigned_worker_rank = len(self.workers)
+                # Store all transfer refs (need to wait for all)
+                self.transfer_refs[request.request_id] = [t.get("transfer_ref") for t in transfer_tasks if t.get("success")]
+                
+                if all(t.get("success") for t in transfer_tasks):
+                    request.kv_transfer_status = KVTransferStatus.TRANSFERRING
+                    self.transfer_queue.append(request)
+                    log_debug(f"🚀 [DecodeEngine] Started {len(transfer_tasks)} shard transfers for {request.request_id}")
+                else:
+                    request.kv_transfer_status = KVTransferStatus.FAILED
+                    log_error(f"[DecodeEngine] Some shard transfers failed for {request.request_id}")
+                
+                return
+            
+            # TP=1: Original single-worker logic
             dst_worker = self.get_next_worker()
             if not dst_worker:
                 log_warning(f"[DecodeEngine] No worker available for {request.request_id}")
@@ -694,6 +833,8 @@ class DecodeEngine(BaseStageEngine):
         
         This is where we actually wait for the transfer to complete.
         Called just before decode, maximizing overlap opportunity.
+        
+        TP Support: Waits for all shard transfers to complete
         """
         request_id = request.request_id
         
@@ -703,6 +844,30 @@ class DecodeEngine(BaseStageEngine):
         
         import ray
         import time
+        
+        transfer_ref = self.transfer_refs[request_id]
+        
+        # TP Support: transfer_ref may be a list (multiple shards)
+        if isinstance(transfer_ref, list):
+            # Wait for all shard transfers
+            try:
+                results = await asyncio.gather(*[ray.get(ref) for ref in transfer_ref])
+                # Check if all succeeded
+                if all(r.get("success", False) for r in results):
+                    request.kv_transfer_status = KVTransferStatus.READY
+                    log_debug(f"✅ [DecodeEngine] All {len(results)} shard transfers completed for {request_id}")
+                else:
+                    request.kv_transfer_status = KVTransferStatus.FAILED
+                    log_error(f"[DecodeEngine] Some shard transfers failed for {request_id}")
+            except Exception as e:
+                log_error(f"[DecodeEngine] Error waiting for shard transfers: {e}")
+                request.kv_transfer_status = KVTransferStatus.FAILED
+            
+            # Cleanup
+            del self.transfer_refs[request_id]
+            return
+        
+        # TP=1: Original single transfer logic
         
         transfer_ref = self.transfer_refs.pop(request_id)
         worker_ref = self.transfer_workers.pop(request_id)
@@ -862,37 +1027,53 @@ class DecodeEngine(BaseStageEngine):
                     self.block_manager.allocate_blocks(request, num_blocks=blocks_needed)
                     dst_blocks = self.block_manager.get_block_table(request.request_id)
                     
-                    # Get destination worker and rank
-                    dst_worker = self.get_next_worker()
+                    # Transfer KV cache (handle TP>1 in SIMULATION mode)
+                    from kvserve.engine.kv_transfer import TransferMethod
+                    is_simulation = (self.kv_transfer_manager and 
+                                   self.kv_transfer_manager.transfer_method == TransferMethod.SIMULATION)
                     
-                    if dst_worker:
-                        # Get source and destination ranks
-                        # Source rank: prefill worker (assuming worker 0 for simplicity)
-                        src_rank = 0  # Prefill workers start from rank 0
-                        
-                        # Destination rank: decode worker
-                        dst_rank = await dst_worker.get_global_rank.remote()
-                        
-                        # Transfer KV cache
-                        transfer_start = time.time()
-                        try:
+                    # For TP>1 + SIMULATION: Load KV to ALL workers (each gets its shard)
+                    # For TP=1 or non-SIMULATION: Load to single worker
+                    workers_to_load = self.workers if (is_simulation and self.tensor_parallel_size > 1) else [self.get_next_worker()]
+                    
+                    transfer_start = time.time()
+                    try:
+                        all_success = True
+                        for worker_idx, dst_worker in enumerate(workers_to_load):
+                            if not dst_worker:
+                                all_success = False
+                                continue
+                            
+                            # Get ranks
+                            src_rank = worker_idx if is_simulation else 0  # Prefill worker with same TP rank
+                            dst_rank = await dst_worker.get_global_rank.remote()
+                            
+                            # For TP>1 + SIMULATION, use shard-specific request_id
+                            req_id_for_file = f"{request.request_id}_tp{worker_idx}" if (is_simulation and self.tensor_parallel_size > 1) else request.request_id
+                            
+                            # Transfer KV cache
                             success = await self.kv_transfer_manager.transfer_kv_cache(
-                                request_id=request.request_id,
+                                request_id=req_id_for_file,
                                 src_rank=src_rank,
                                 dst_rank=dst_rank,
                                 src_blocks=migrating_req.kv_block_indexes,
                                 dst_blocks=dst_blocks,
                             )
-                            transfer_time = time.time() - transfer_start
                             
-                            if success:
-                                request.kv_transfer_time = transfer_time
-                                log_debug(f"[Decode] KV cache transferred for {request.request_id} in {transfer_time*1000:.2f}ms")
-                            else:
-                                log_warning(f"[Decode] KV cache transfer failed for {request.request_id}")
-                                await self._cleanup_request(request, reason="transfer_failed")
-                                continue
-                        except Exception as e:
+                            if not success:
+                                log_warning(f"[Decode] KV shard {worker_idx} transfer failed for {request.request_id}")
+                                all_success = False
+                        
+                        transfer_time = time.time() - transfer_start
+                        
+                        if all_success:
+                            request.kv_transfer_time = transfer_time
+                            log_debug(f"[Decode] KV cache transferred for {request.request_id} in {transfer_time*1000:.2f}ms")
+                        else:
+                            log_warning(f"[Decode] KV cache transfer failed for {request.request_id}")
+                            await self._cleanup_request(request, reason="transfer_failed")
+                            continue
+                    except Exception as e:
                             log_error(f"[Decode] KV cache transfer error: {e}")
                             import traceback
                             traceback.print_exc()
@@ -1023,18 +1204,27 @@ class DecodeEngine(BaseStageEngine):
             for req in batched_requests.requests
         }
         
-        # Get worker
-        worker = self.get_next_worker()
-        if not worker:
-            return
-        
         # Execute decode
         step_start = time.time()
         try:
-            outputs = await worker.step_decode.remote(
-                batched_requests,
-                kv_block_tables
-            )
+            # ⚠️ CRITICAL FOR TP>1: ALL workers must be called simultaneously
+            if self.tensor_parallel_size > 1:
+                # TP>1: Call ALL workers in parallel
+                results = await asyncio.gather(*[
+                    worker.step_decode.remote(batched_requests, kv_block_tables)
+                    for worker in self.workers
+                ])
+                # All workers return same outputs (synchronized via NCCL)
+                outputs = results[0]
+            else:
+                # TP=1: Single worker
+                worker = self.get_next_worker()
+                if not worker:
+                    return
+                outputs = await worker.step_decode.remote(
+                    batched_requests,
+                    kv_block_tables
+                )
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             import traceback
@@ -1045,6 +1235,13 @@ class DecodeEngine(BaseStageEngine):
             await asyncio.sleep(0.1)
             return
         step_end = time.time()
+        # Compute-only duration for this batch
+        batch_compute_time = None
+        if outputs and getattr(outputs[0], "step_start_time", None) is not None and getattr(outputs[0], "step_end_time", None) is not None:
+            batch_compute_time = outputs[0].step_end_time - outputs[0].step_start_time
+        else:
+            batch_compute_time = step_end - step_start
+        self.total_decode_compute_time += batch_compute_time
         
         if not outputs:
             log_warning(f"[DecodeEngine] No outputs returned from worker")
@@ -1057,7 +1254,8 @@ class DecodeEngine(BaseStageEngine):
             request = next((r for r in batched_requests.requests if r.request_id == output.request_id), None)
             if request:
                 request.output_token_ids = output.output_token_ids
-                request.total_decode_compute_time += (step_end - step_start)
+                # Per-request view: attribute the batch compute time to each member
+                request.total_decode_compute_time += batch_compute_time
                 
                 log_debug(f"[DecodeEngine] Request {output.request_id}: tokens={len(output.output_token_ids)}, finished={output.finished}")
                 
@@ -1260,15 +1458,24 @@ class DecodeEngine(BaseStageEngine):
             for req in batched_requests.requests
         }
         
-        # Get worker
-        worker = self.get_next_worker()
-        if not worker:
-            return
-        
         # Execute decode
         step_start = time.time()
         try:
-            outputs = await worker.step_decode.remote(batched_requests, kv_block_tables)
+            # ⚠️ CRITICAL FOR TP>1: ALL workers must be called simultaneously
+            if self.tensor_parallel_size > 1:
+                # TP>1: Call ALL workers in parallel
+                results = await asyncio.gather(*[
+                    worker.step_decode.remote(batched_requests, kv_block_tables)
+                    for worker in self.workers
+                ])
+                # All workers return same outputs (synchronized via NCCL)
+                outputs = results[0]
+            else:
+                # TP=1: Single worker
+                worker = self.get_next_worker()
+                if not worker:
+                    return
+                outputs = await worker.step_decode.remote(batched_requests, kv_block_tables)
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             for req in batched_requests.requests:
@@ -1276,6 +1483,13 @@ class DecodeEngine(BaseStageEngine):
             await asyncio.sleep(0.1)
             return
         step_end = time.time()
+        # Compute-only duration for this batch
+        batch_compute_time = None
+        if outputs and getattr(outputs[0], "step_start_time", None) is not None and getattr(outputs[0], "step_end_time", None) is not None:
+            batch_compute_time = outputs[0].step_end_time - outputs[0].step_start_time
+        else:
+            batch_compute_time = step_end - step_start
+        self.total_decode_compute_time += batch_compute_time
         
         if not outputs:
             log_warning(f"[DecodeEngine] No outputs returned from worker")
@@ -1288,7 +1502,7 @@ class DecodeEngine(BaseStageEngine):
             request = next((r for r in batched_requests.requests if r.request_id == output.request_id), None)
             if request:
                 request.output_token_ids = output.output_token_ids
-                request.total_decode_compute_time += (step_end - step_start)
+                request.total_decode_compute_time += batch_compute_time
                 
                 log_debug(f"[DecodeEngine] Request {output.request_id}: tokens={len(output.output_token_ids)}, finished={output.finished}")
                 
@@ -1349,4 +1563,12 @@ class DecodeEngine(BaseStageEngine):
             "scheduler_waiting": self.scheduler.num_waiting_requests(),
             "scheduler_running": self.scheduler.num_running_requests(),
         }
+
+    def get_decode_compute_ms(self) -> float:
+        """Return accumulated decode compute time (ms) without scheduling/IO."""
+        return self.total_decode_compute_time * 1000.0
+
+    def reset_decode_compute_time(self):
+        """Reset accumulated decode compute time."""
+        self.total_decode_compute_time = 0.0
 

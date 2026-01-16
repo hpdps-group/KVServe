@@ -81,9 +81,12 @@ class PDBackend:
         transfer_method = TransferMethod.NCCL if kv_transfer_method == "nccl" else TransferMethod.P2P_COPY
         self.kv_transfer_manager = KVTransferManager(transfer_method=transfer_method)
         
-        # NCCL configuration
+        # NCCL configuration for P2P group
+        # For TP>1: world_size = (prefill + decode) * tensor_parallel_size
+        # For TP=1: world_size = prefill + decode
         self.nccl_init_method = nccl_init_method
-        self.nccl_world_size = num_prefill_workers + num_decoding_workers
+        tp_multiplier = tensor_parallel_size if tensor_parallel_size > 1 else 1
+        self.nccl_world_size = (num_prefill_workers + num_decoding_workers) * tp_multiplier
         
         # Engine configuration
         self.max_model_len = max_model_len
@@ -129,8 +132,10 @@ class PDBackend:
         # Check GPU availability
         import torch
         num_gpus_available = torch.cuda.device_count()
-        num_gpus_needed = self.num_prefill_workers + self.num_decoding_workers
-        log_info(f"[PDBackend] GPU check: {num_gpus_available} available, {num_gpus_needed} needed")
+        tensor_parallel_size = self.engine_config.get('tensor_parallel_size', 1)
+        num_gpus_needed = (self.num_prefill_workers + self.num_decoding_workers) * tensor_parallel_size
+        log_info(f"[PDBackend] GPU check: {num_gpus_available} available, {num_gpus_needed} needed "
+                 f"(TP={tensor_parallel_size}, P={self.num_prefill_workers}, D={self.num_decoding_workers})")
         
         if num_gpus_available < num_gpus_needed:
             log_warning(f"[PDBackend] ⚠️  Insufficient GPUs! Have {num_gpus_available}, need {num_gpus_needed}")

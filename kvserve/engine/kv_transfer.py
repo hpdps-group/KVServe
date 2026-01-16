@@ -11,6 +11,7 @@ class TransferMethod(Enum):
     """KV transfer method"""
     NCCL = "nccl"  # NCCL P2P transfer
     P2P_COPY = "p2p_copy"  # Direct GPU-to-GPU copy
+    SIMULATION = "simulation"  # File-based simulation (no real transfer)
 
 
 class KVTransferManager:
@@ -22,6 +23,7 @@ class KVTransferManager:
         self,
         transfer_method: TransferMethod = TransferMethod.NCCL,
         metrics_callback=None,
+        simulation_dir: Optional[str] = None,  # For SIMULATION mode
     ):
         """
         Initialize KV transfer manager
@@ -29,6 +31,7 @@ class KVTransferManager:
         Args:
             transfer_method: Method for transferring KV cache
             metrics_callback: Callback function to record transfer metrics (transfer_time, num_blocks)
+            simulation_dir: Directory for saving KV files in SIMULATION mode
         """
         self.transfer_method = transfer_method
         self.metrics_callback = metrics_callback
@@ -40,6 +43,15 @@ class KVTransferManager:
         self.transfer_count = 0
         self.total_transfer_time = 0.0
         self.total_bytes_transferred = 0
+        
+        # Simulation mode
+        self.simulation_dir = simulation_dir
+        self.simulation_manifest: Dict[str, Dict] = {}  # {request_id: {file, bytes, ...}}
+        if transfer_method == TransferMethod.SIMULATION:
+            import os
+            if not simulation_dir:
+                raise ValueError("simulation_dir required for SIMULATION mode")
+            os.makedirs(simulation_dir, exist_ok=True)
     
     def register_worker(self, global_rank: int, worker: Any) -> None:
         """
@@ -89,6 +101,12 @@ class KVTransferManager:
                 src_rank, src_blocks,
                 dst_rank, dst_blocks
             )
+        elif self.transfer_method == TransferMethod.SIMULATION:
+            return await self._transfer_via_simulation(
+                request_id,
+                src_rank, src_blocks,
+                dst_rank, dst_blocks,
+            )
         else:
             return False
     
@@ -137,7 +155,6 @@ class KVTransferManager:
                 return {"success": False, "error": "Worker not found"}
             
             # ✅ Start async transfer - DO NOT AWAIT!
-            # This returns immediately, allowing other work to proceed
             transfer_ref = dst_worker.p2p_transfer_kv_async.remote(
                 src_worker,
                 src_rank,
@@ -280,5 +297,127 @@ class KVTransferManager:
                 if self.total_transfer_time > 0 else 0
             ),  # GB/s (not Gbps)
         }
+
+    async def _transfer_via_simulation(
+        self,
+        request_id: str,
+        src_rank: int,
+        src_blocks: List[int],
+        dst_rank: int,
+        dst_blocks: List[int],
+    ) -> bool:
+        """
+        Simulation mode: extract and compress KV, save to file (prefill) OR load from file (decode)
+        """
+        try:
+            import pickle
+            import os
+            
+            # Check if this is decode stage (manifest already loaded)
+            if request_id in self.simulation_manifest:
+                # Decode stage: load from file
+                info = self.simulation_manifest[request_id]
+                kv_file = info['kv_file']
+                
+                if not os.path.exists(kv_file):
+                    log_error(f"[KVTransfer-SIM] KV file not found: {kv_file}")
+                    return False
+                
+                # Load KV data
+                with open(kv_file, 'rb') as f:
+                    data = pickle.load(f)
+                
+                # Get destination worker and write KV
+                dst_worker = self.worker_registry.get(dst_rank)
+                if dst_worker is None:
+                    log_error(f"[KVTransfer-SIM] Dest worker not found (rank={dst_rank})")
+                    return False
+                
+                # Decompress and write
+                result = await dst_worker.decompress_and_write_kv.remote(
+                    data['compressed_kv'],
+                    dst_blocks
+                )
+                
+                # Update manifest with decompression time
+                self.simulation_manifest[request_id]['decompression_time_ms'] = result['decompression_time_ms']
+                self.simulation_manifest[request_id]['write_time_ms'] = result['write_time_ms']
+                
+                log_debug(f"[KVTransfer-SIM] Loaded KV for {request_id}: "
+                         f"decompress={result['decompression_time_ms']:.2f}ms, "
+                         f"write={result['write_time_ms']:.2f}ms")
+                
+                return True
+            
+            else:
+                # Prefill stage: extract and save to file
+                src_worker = self.worker_registry.get(src_rank)
+                if src_worker is None:
+                    log_error(f"[KVTransfer-SIM] Source worker not found (rank={src_rank})")
+                    return False
+                
+                # Extract and compress KV (with internal timing)
+                result = await src_worker.extract_and_compress_kv.remote(src_blocks, request_id)
+                
+                # Save to file (use async I/O to avoid blocking)
+                kv_file = os.path.join(self.simulation_dir, f"{request_id}_kv.pkl")
+                data_to_save = {
+                    'request_id': request_id,
+                    'compressed_kv': result.get('compressed_kv') or result.get('kv_data'),
+                    'dst_blocks': dst_blocks,
+                    'src_blocks': src_blocks,  # Save src_blocks for reference
+                    'kv_bytes': result['bytes'],
+                    'compression_time_ms': result.get('compression_time_ms', 0),
+                    'extract_time_ms': result.get('extract_time_ms', 0),
+                }
+                
+                # Use asyncio.to_thread to run file I/O in background thread
+                def save_file():
+                    with open(kv_file, 'wb') as f:
+                        pickle.dump(data_to_save, f)
+                
+                await asyncio.to_thread(save_file)
+                
+                # Record in manifest
+                original_bytes = result.get('original_bytes', result['bytes'])  # Fallback to bytes if no original
+                self.simulation_manifest[request_id] = {
+                    'kv_file': kv_file,
+                    'kv_bytes': result['bytes'],
+                    'original_bytes': original_bytes,
+                    'dst_blocks': dst_blocks,
+                    'src_blocks': src_blocks,
+                    'dst_rank': dst_rank,
+                    'compression_time_ms': result.get('compression_time_ms', 0),
+                    'extract_time_ms': result.get('extract_time_ms', 0),
+                }
+                
+                log_debug(f"[KVTransfer-SIM] Saved KV for {request_id}: {result['bytes']/1e6:.2f} MB, "
+                         f"compression={result.get('compression_time_ms', 0):.2f}ms")
+                
+                return True
+            
+        except Exception as e:
+            log_error(f"[KVTransfer-SIM] Failed for {request_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def save_simulation_manifest(self, manifest_file: str):
+        """Save simulation manifest to file"""
+        import pickle
+        with open(manifest_file, 'wb') as f:
+            pickle.dump(self.simulation_manifest, f)
+        log_info(f"[KVTransfer-SIM] Saved manifest: {len(self.simulation_manifest)} requests")
+    
+    def load_simulation_manifest(self, manifest_file: str):
+        """Load simulation manifest from file"""
+        import pickle
+        with open(manifest_file, 'rb') as f:
+            self.simulation_manifest = pickle.load(f)
+        log_info(f"[KVTransfer-SIM] Loaded manifest: {len(self.simulation_manifest)} requests")
+    
+    def get_simulation_manifest(self) -> Dict[str, Dict]:
+        """Get simulation manifest"""
+        return self.simulation_manifest
 
 

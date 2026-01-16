@@ -59,25 +59,58 @@ async def receive_from_prefill_multistream(
                     log_warning(f"[DecodeEngine] No worker available for {request.request_id}")
                     continue
                 
-                src_rank = 0  # Prefill worker
-                dst_rank = await dst_worker.get_global_rank.remote()
-                request.assigned_worker_rank = dst_rank
+                # TP Support: Get tensor_parallel_size from engine
+                tp_size = getattr(engine, 'tensor_parallel_size', 1)
                 
-                # Create async transfer task
-                request.kv_transfer_status = KVTransferStatus.PENDING
-                transfer_task = asyncio.create_task(
-                    transfer_single_request(
-                        request,
-                        kv_transfer_manager,
-                        src_rank,
-                        dst_rank,
-                        migrating_req.kv_block_indexes,
-                        dst_blocks,
-                        ready_queue,
-                        transferring,
-                        transfer_stats
+                if tp_size > 1:
+                    # TP mode: Transfer all shards in parallel
+                    transfer_tasks = []
+                    for tp_rank in range(len(engine.workers)):
+                        src_rank = tp_rank
+                        dst_rank = len(engine.workers) + tp_rank
+                        
+                        shard_task = asyncio.create_task(
+                            transfer_single_request(
+                                request,
+                                kv_transfer_manager,
+                                src_rank,
+                                dst_rank,
+                                migrating_req.kv_block_indexes,
+                                dst_blocks,
+                                ready_queue,
+                                transferring,
+                                transfer_stats
+                            )
+                        )
+                        transfer_tasks.append(shard_task)
+                    
+                    # Store all tasks (will wait for all to complete)
+                    request.kv_transfer_task = asyncio.gather(*transfer_tasks)
+                    request.assigned_worker_rank = len(engine.workers)  # First decode worker
+                else:
+                    # TP=1: Original single transfer logic
+                    src_rank = 0  # Prefill worker
+                    dst_rank = await dst_worker.get_global_rank.remote()
+                    request.assigned_worker_rank = dst_rank
+                    
+                    # Create async transfer task
+                    transfer_task = asyncio.create_task(
+                        transfer_single_request(
+                            request,
+                            kv_transfer_manager,
+                            src_rank,
+                            dst_rank,
+                            migrating_req.kv_block_indexes,
+                            dst_blocks,
+                            ready_queue,
+                            transferring,
+                            transfer_stats
+                        )
                     )
-                )
+                    request.kv_transfer_task = transfer_task
+                
+                request.kv_transfer_status = KVTransferStatus.PENDING
+                transfer_task = request.kv_transfer_task
                 
                 request.kv_transfer_task = transfer_task
                 transferring[request.request_id] = transfer_task

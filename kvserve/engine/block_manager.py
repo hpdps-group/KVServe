@@ -22,6 +22,9 @@ class BlockManager:
     """
     Block Manager for KV cache
     Maintains key-value cache at block level with GPU/CPU swapping support
+    
+    TP Support: Each worker independently manages blocks for its KV shard.
+    Block IDs are local to each worker and don't need cross-worker coordination.
     """
     
     def __init__(
@@ -63,7 +66,7 @@ class BlockManager:
         # Statistics tracking
         self.swap_count = 0
         self.total_swap_time = 0.0
-        
+    
         # Defragmentation tracking
         self.total_allocations = 0
         self.last_defrag_allocation_count = 0
@@ -314,7 +317,7 @@ class BlockManager:
         usage = self.get_block_usage()
         logger.debug(f"[{self.stage}] Block usage: GPU={usage['gpu']}, CPU={usage['cpu']}, "
                     f"Swapping={usage['swap']}, Requests={usage['#req']}")
-    
+
     def _defragment_blocks(self, location: BlockLocation):
         """
         Defragment the free block list by sorting it
