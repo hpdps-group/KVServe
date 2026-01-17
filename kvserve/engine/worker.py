@@ -32,11 +32,13 @@ from kvserve.engine.utils import (
     BatchedRequests,
     StepOutput,
 )
+from kvserve.engine.service_config import ServiceConfig
 from kvserve.manager.compression_manager import (
     CompressedKVData,
     CompressionManager,
     CompressionConfig,
     EasyDist,
+    get_default_compression_config,
 )
 from kvserve.engine.logger import log_error, log_info, log_debug, log_warning
 
@@ -68,7 +70,8 @@ class Worker:
         world_size: Optional[int] = None,
         nccl_init_method: Optional[str] = None,
         # KV compression parameters
-        compression_config: Optional[Dict[str, Any]] = None,
+        compression_config = None,  # Can be Dict, "default", None, or OnlineController instance
+        service_config: Optional[ServiceConfig] = None,  # Service parameters for controller mode
     ):
         """
         Initialize worker
@@ -87,7 +90,11 @@ class Worker:
             global_rank: Global NCCL rank
             world_size: NCCL world size
             nccl_init_method: NCCL init method (e.g., "tcp://localhost:29500")
-            compression_config: KV compression configuration (optional)
+            compression_config: KV compression configuration, supports three modes:
+                - Dict: Custom compression config
+                - None or "default": Use default compression config
+                - OnlineController instance: Dynamic profile selection
+            service_config: Service configuration for controller mode (bandwidth, SLO, etc.)
         """
         self.worker_id = worker_id
         self.stage = stage
@@ -117,8 +124,14 @@ class Worker:
         
         # KV compression
         self.compression_manager = None
-        self.compression_config = compression_config
-        if compression_config and compression_config.get("enabled", False):
+        self.compression_config_input = compression_config  # Store original input
+        self.online_controller = None  # Store controller if provided
+        self.service_config = service_config or ServiceConfig()  # Store service config
+        
+        # Resolve compression config based on input type
+        self.compression_config = self._resolve_compression_config(compression_config)
+        
+        if self.compression_config and self.compression_config.get("enabled", False):
             self._init_compression_manager()
         
         # GPU info
@@ -140,9 +153,50 @@ class Worker:
         # Track decode steps
         self._decode_steps = {}
     
+    def _resolve_compression_config(self, compression_config):
+        """
+        Resolve compression config based on input type
+        
+        Args:
+            compression_config: Can be Dict, "default", None, or OnlineController instance
+            
+        Returns:
+            Resolved compression config dictionary
+        """
+        # Check if it's an OnlineController instance
+        try:
+            from kvserve.controller import OnlineController
+            if isinstance(compression_config, OnlineController):
+                self.online_controller = compression_config
+                log_info(f"[Worker-{self.worker_id}] Using OnlineController for dynamic compression")
+                # For controller mode, return a placeholder config
+                # Actual config will be determined at runtime
+                return {"enabled": True, "mode": "controller"}
+        except ImportError:
+            pass
+        
+        # Handle Dict (custom config)
+        if isinstance(compression_config, dict):
+            log_info(f"[Worker-{self.worker_id}] Using custom compression config")
+            return compression_config
+        
+        # Handle "default" string or None
+        if compression_config is None or compression_config == "default":
+            log_info(f"[Worker-{self.worker_id}] Using default compression config")
+            return get_default_compression_config()
+        
+        # Unknown type, use default
+        log_warning(f"[Worker-{self.worker_id}] Unknown compression_config type: {type(compression_config)}, using default")
+        return get_default_compression_config()
+    
     def _init_compression_manager(self):
         """Initialize compression manager with configured pipeline"""
         try:
+            # Skip initialization for controller mode (will be handled at runtime)
+            if self.compression_config.get("mode") == "controller":
+                log_info(f"[Worker-{self.worker_id}] Controller mode: compression manager will be initialized at runtime")
+                return
+            
             from kvserve.manager.compression_manager import CompressionManager, CompressionConfig
             from kvserve.transformer import KVServeTransformer
             from kvserve.quantizer import KVServeQuantizer
@@ -181,7 +235,84 @@ class Worker:
     
     def compression_manager_is_enabled(self) -> bool:
         """Check if compression manager is enabled"""
+        if self.compression_config and self.compression_config.get("mode") == "controller":
+            # Controller mode is always "enabled" but actual decision is made at runtime
+            return True
         return self.compression_manager is not None and self.compression_config and self.compression_config.get("enabled", False)
+    
+    def get_runtime_compression_config(
+        self,
+        kv_volume_bytes: float,
+        bandwidth_mbps: Optional[float] = None,
+        model_latency_ms: Optional[float] = None,
+        slo_ms: Optional[float] = None,
+        accuracy_requirement: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get runtime compression config (only for controller mode)
+        
+        Args:
+            kv_volume_bytes: KV cache volume in bytes
+            bandwidth_mbps: Network bandwidth in MB/s (uses service_config if None)
+            model_latency_ms: Model computation latency in milliseconds
+            slo_ms: SLO constraint in milliseconds (uses service_config if None)
+            accuracy_requirement: Required accuracy (uses service_config if None)
+            
+        Returns:
+            Compression config dictionary or None
+        """
+        if self.online_controller is None:
+            # Not in controller mode, return current config
+            return self.compression_config
+        
+        # Use service_config defaults if parameters not provided
+        bandwidth_mbps = bandwidth_mbps or self.service_config.bandwidth_mbps
+        slo_ms = slo_ms or self.service_config.slo_ms
+        accuracy_requirement = accuracy_requirement or self.service_config.accuracy_requirement
+        model_latency_ms = model_latency_ms or 100.0  # Default if not specified
+        
+        # Call controller to select profile
+        profile, context = self.online_controller.select_profile(
+            V_bytes=kv_volume_bytes,
+            B_mbps=bandwidth_mbps,
+            T_model_ms=model_latency_ms,
+            T_SLO_ms=slo_ms,
+            acc_req=accuracy_requirement
+        )
+        
+        # Store context for later update
+        self._last_controller_context = context
+        
+        if profile:
+            log_debug(f"[Worker-{self.worker_id}] Controller selected profile: {profile.profile_id}")
+            return profile.compression_config
+        else:
+            reason = context.get('reason', 'unknown')
+            log_debug(f"[Worker-{self.worker_id}] Controller: no compression (reason: {reason})")
+            return {"enabled": False}
+    
+    def update_service_config(self, **kwargs):
+        """
+        Update service configuration parameters
+        
+        Args:
+            **kwargs: Service config parameters to update (bandwidth_mbps, slo_ms, etc.)
+        """
+        self.service_config.update(**kwargs)
+        log_info(f"[Worker-{self.worker_id}] Service config updated: {kwargs}")
+    
+    def update_controller_stats(self, observed_latency_ms: float):
+        """
+        Update controller statistics with observed latency (only for controller mode)
+        
+        Args:
+            observed_latency_ms: Observed end-to-end latency in milliseconds
+        """
+        if self.online_controller is None or not hasattr(self, '_last_controller_context'):
+            return
+        
+        self.online_controller.update(self._last_controller_context, observed_latency_ms)
+        log_debug(f"[Worker-{self.worker_id}] Updated controller with T_obs={observed_latency_ms:.2f}ms")
     
     def get_stage(self) -> EngineStage:
         """Get current stage"""
@@ -731,13 +862,14 @@ class Worker:
         
         return kv_data
     
-    def write_kv_blocks(self, block_indices: List[int], kv_data: torch.Tensor):
+    def write_kv_blocks(self, block_indices: List[int], kv_data: torch.Tensor, layer_offset: int = 0):
         """
         Write KV cache data to specified blocks
         
         Args:
             block_indices: List of block indices to write to
             kv_data: KV data tensor [num_layers, 2, num_blocks, block_size, num_heads, head_size]
+            layer_offset: Starting layer index (for chunked writes)
         """
         if self.kv_cache is None:
             raise RuntimeError("KV cache not initialized")
@@ -747,8 +879,11 @@ class Worker:
         
         block_idx_tensor = torch.tensor(block_indices, dtype=torch.long, device=self.device)
         
-        for layer_idx, layer_kv in enumerate(self.kv_cache):
-            layer_kv[:, block_idx_tensor, :, :, :] = kv_data[layer_idx]
+        chunk_num_layers = kv_data.shape[0]
+        for i in range(chunk_num_layers):
+            layer_idx = layer_offset + i
+            if layer_idx < len(self.kv_cache):
+                self.kv_cache[layer_idx][:, block_idx_tensor, :, :, :] = kv_data[i]
     
     def extract_and_compress_kv(self, block_indices: List[int], request_id: str) -> Dict[str, Any]:
         """
@@ -790,9 +925,17 @@ class Worker:
             compression_time_ms = (time.time() - t_compress_start) * 1000.0
             
             if compressed:
-                # Move compressed tensor to CPU to avoid GPU memory pressure in pickling/simulation
-                if hasattr(compressed, 'compressed_tensor') and compressed.compressed_tensor.device.type == 'cuda':
-                    compressed.compressed_tensor = compressed.compressed_tensor.cpu()
+                # Move compressed data to CPU to avoid GPU memory pressure in pickling/simulation
+                if compressed.is_chunked:
+                    # Chunked compression: move all chunks to CPU
+                    for chunk in compressed.chunks:
+                        if chunk.device.type == 'cuda':
+                            chunk.data = chunk.cpu()
+                else:
+                    # Single tensor compression
+                    if compressed.compressed_tensor is not None and compressed.compressed_tensor.device.type == 'cuda':
+                        compressed.compressed_tensor = compressed.compressed_tensor.cpu()
+                
                 return {
                     'compressed_kv': compressed,
                     'bytes': compressed.compressed_size,
@@ -836,9 +979,16 @@ class Worker:
         # Decompress if needed
         t_decompress_start = time.time()
         if self.compression_manager and hasattr(compressed_data, 'compressed_tensor'):
-            # Ensure compressed tensor on GPU for decompression
-            if compressed_data.compressed_tensor.device.type == 'cpu':
-                compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
+            # Ensure compressed tensor on GPU for decompression (handle both chunked and non-chunked)
+            if compressed_data.is_chunked:
+                # Move all chunks to GPU
+                if compressed_data.chunks:
+                    for chunk in compressed_data.chunks:
+                        if chunk is not None and chunk.device.type == 'cpu':
+                            chunk.data = chunk.to(self.device, non_blocking=True)
+            else:
+                if compressed_data.compressed_tensor is not None and compressed_data.compressed_tensor.device.type == 'cpu':
+                    compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
             
             # Create compression config (following remote API)
             config = CompressionConfig(
@@ -858,13 +1008,28 @@ class Worker:
                 kv_data = kv_data.to(self.device, non_blocking=True)
             decompression_time_ms = 0.0
         
-        # Write to KV cache (kv_data should now be on GPU)
+        # Write to KV cache (handle both single tensor and chunked list)
         t_write_start = time.time()
-        self.write_kv_blocks(dst_blocks, kv_data)
+        
+        if isinstance(kv_data, list):
+            # Chunked decompression result: write chunk by chunk to save memory
+            log_debug(f"[Worker] Writing {len(kv_data)} decompressed chunks to KV cache")
+            current_layer_offset = 0
+            for chunk_idx, chunk_tensor in enumerate(kv_data):
+                chunk_num_layers = chunk_tensor.shape[0]
+                self.write_kv_blocks(dst_blocks, chunk_tensor, layer_offset=current_layer_offset)
+                current_layer_offset += chunk_num_layers
+                # Release chunk immediately after writing
+                del chunk_tensor
+            log_debug(f"[Worker] Finished writing {current_layer_offset} total layers")
+        else:
+            # Single tensor: write all at once
+            self.write_kv_blocks(dst_blocks, kv_data)
+            del kv_data
+        
         write_time_ms = (time.time() - t_write_start) * 1000.0
         
-        # Clear kv_data after writing to release memory
-        del kv_data
+        # Final cleanup
         torch.cuda.empty_cache()
         
         return {
@@ -1151,7 +1316,7 @@ class Worker:
             # Receive metadata
             metadata_tensor = torch.empty(metadata_size, dtype=torch.uint8, device=self.device)
             torch.distributed.recv(metadata_tensor, src=src_rank)
-
+            
             # Unpack metadata
             metadata = EasyDist.unpack_object(metadata_tensor)
             

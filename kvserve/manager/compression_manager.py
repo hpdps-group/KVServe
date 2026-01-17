@@ -5,6 +5,7 @@ Coordinates transformer, quantizer, and codec compression components
 
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
+import copy
 import torch
 import gc
 import msgpack
@@ -12,7 +13,35 @@ import numpy as np
 
 from kvserve.manager.components import Transformer, Quantizer, Codec
 from kvserve.quantizer import KVServeQuantizer
-from kvserve.engine.logger import log_info, log_error, log_warning
+from kvserve.engine.logger import log_info, log_error, log_warning, log_debug
+
+
+DEFAULT_COMPRESSION_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "pipeline": ["quantizer", "codec"],
+    "quantizer_config": {
+        "model_name": "Llama-3.1-8B-Instruct",
+        "hybrid_ratio": 0.8,
+        "high_key_max_value": 12,
+        "high_value_max_value": 8,
+        "low_key_max_value": 6,
+        "low_value_max_value": 4,
+        "axis_key": "channel",
+        "axis_value": "token",
+        "split_type": "head",
+    },
+    "codec_config": {
+        "codec_type": "nvcomp",
+        "nvcomp_algorithm": "ANS",
+        "data_type": "|u1",
+    },
+    "min_compress_size": 1024,
+}
+
+
+def get_default_compression_config() -> Dict[str, Any]:
+    """Return a copy of the default compression config."""
+    return copy.deepcopy(DEFAULT_COMPRESSION_CONFIG)
 
 
 @dataclass
@@ -37,10 +66,15 @@ class CompressedKVData:
     """Compressed KV cache data structure"""
     request_id: str
     layer_id: int
-    compressed_tensor: torch.Tensor
-    metadata: Dict[str, Any]  # Includes compression config, original size, etc.
-    original_size: int
-    compressed_size: int
+    compressed_tensor: Optional[torch.Tensor] = None  # Single tensor (for non-chunked)
+    metadata: Dict[str, Any] = None  # Includes compression config, original size, etc.
+    original_size: int = 0
+    compressed_size: int = 0
+    
+    # Chunked compression support (for large KV caches)
+    is_chunked: bool = False
+    chunks: Optional[List[torch.Tensor]] = None  # List of compressed chunk tensors
+    chunk_metadata: Optional[List[Dict[str, Any]]] = None  # Metadata for each chunk
     # metadata_size: int
 
 class CompressionManager:
@@ -343,6 +377,8 @@ class CompressionManager:
         """
         Optimized fast path: compress all layers in a single batch with minimal overhead.
         Avoids repeated function calls by processing all layers in a tight loop.
+        
+        For large data (>500MB), automatically switches to chunked compression to reduce memory peak.
         """
         # Update compression config for every request
         self.update_config(config)
@@ -359,6 +395,16 @@ class CompressionManager:
             
             if original_size < self.config.min_compress_size:
                 return None
+            
+            # Auto-chunking: If data > 500MB, use chunked compression to reduce memory peak
+            CHUNK_THRESHOLD_MB = 500
+            chunk_threshold_bytes = CHUNK_THRESHOLD_MB * 1024 * 1024
+            
+            if original_size > chunk_threshold_bytes:
+                log_info(f"[CompressionManager] Large KV cache detected ({original_size/(1024**2):.2f} MB > {CHUNK_THRESHOLD_MB} MB), using chunked compression")
+                return self._compress_all_layers_chunked(all_layers_data, request_id, metadata, chunk_size=8)
+            
+            # Otherwise, use fast single-batch compression (original logic below)
 
             # One-time initialization
             self.original_size = original_size
@@ -469,25 +515,187 @@ class CompressionManager:
             log_error(f"[CompressionManager] Traceback: {traceback.format_exc()}")
             return None
     
+    def _compress_all_layers_chunked(
+        self,
+        all_layers_data: torch.Tensor,
+        request_id: str,
+        metadata: Dict[str, Any],
+        chunk_size: int = 8,
+    ) -> Optional[CompressedKVData]:
+        """
+        Chunked compression for large KV caches to reduce memory peak.
+        Compresses layers in chunks (e.g., 8 layers at a time) and stores as separate tensors.
+        """
+        num_layers = all_layers_data.shape[0]
+        original_size = all_layers_data.numel() * all_layers_data.element_size()
+        
+        chunks = []
+        chunk_metadata_list = []
+        total_compressed_size = 0
+        
+        num_chunks = (num_layers + chunk_size - 1) // chunk_size
+        log_info(f"[CompressionManager] Compressing {num_layers} layers in {num_chunks} chunks of {chunk_size} layers each")
+        
+        try:
+            for chunk_idx in range(num_chunks):
+                start_layer = chunk_idx * chunk_size
+                end_layer = min(start_layer + chunk_size, num_layers)
+                
+                log_debug(f"[CompressionManager] Processing chunk {chunk_idx+1}/{num_chunks} (layers {start_layer}-{end_layer-1})")
+                
+                # Extract chunk
+                chunk_data = all_layers_data[start_layer:end_layer]
+                chunk_num_layers = end_layer - start_layer
+                
+                # Prepare chunk metadata
+                chunk_meta = {
+                    "request_id": request_id,
+                    "original_dtype": str(chunk_data.dtype).replace("torch.", ""),
+                    "device": str(chunk_data.device),
+                    "start_layer_id": start_layer,
+                    "num_layers": chunk_num_layers,
+                    "chunk_index": chunk_idx,
+                    "total_chunks": num_chunks,
+                    **metadata,
+                }
+                
+                quantization_params_list = []
+                
+                # Process first layer to determine output shape
+                first_layer = chunk_data[0]
+                processed_data = first_layer
+                
+                if "transformer" in self.config.pipeline:
+                    processed_data = self.transformer.transform(start_layer, processed_data, **self.config.transformer_config)
+                    chunk_meta["transformer_applied"] = True
+                
+                if "quantizer" in self.config.pipeline:
+                    processed_data, qparams = self.quantizer.quantize(
+                        start_layer, processed_data, **self.config.quantizer_config
+                    )
+                    quantization_params_list.append(qparams)
+                    chunk_meta["quantization_applied"] = True
+                
+                # Determine permuted shape
+                layer_permuted_shape = (
+                    processed_data.shape[0], # 2
+                    processed_data.shape[3], # heads
+                    processed_data.shape[1], # blocks
+                    processed_data.shape[2], # block_size
+                    processed_data.shape[4]  # head_size
+                )
+                
+                # Allocate buffer for this chunk only
+                chunk_buffer_shape = (chunk_num_layers,) + layer_permuted_shape
+                processed_buffer = torch.empty(
+                    chunk_buffer_shape,
+                    dtype=processed_data.dtype,
+                    device=processed_data.device
+                )
+                
+                # Write first layer
+                processed_buffer[0].copy_(processed_data.permute(0, 3, 1, 2, 4))
+                del processed_data
+                
+                # Process remaining layers in this chunk
+                for i in range(1, chunk_num_layers):
+                    layer_id = start_layer + i
+                    current_data = chunk_data[i]
+                    
+                    if "transformer" in self.config.pipeline:
+                        current_data = self.transformer.transform(
+                            layer_id, current_data, **self.config.transformer_config
+                        )
+                    
+                    if "quantizer" in self.config.pipeline:
+                        current_data, qparams = self.quantizer.quantize(
+                            layer_id, current_data, **self.config.quantizer_config
+                        )
+                        quantization_params_list.append(qparams)
+                    
+                    processed_buffer[i].copy_(current_data.permute(0, 3, 1, 2, 4))
+                    del current_data
+                
+                # Release chunk_data after processing
+                del chunk_data
+                
+                if "quantizer" in self.config.pipeline:
+                    chunk_meta["quantization_params"] = quantization_params_list
+                
+                chunk_meta["codec_shape"] = list(processed_buffer.shape)
+                chunk_meta["codec_dtype"] = str(processed_buffer.dtype).replace("torch.", "")
+                
+                # Codec compression for this chunk
+                compressed_tensor, chunk_meta = self._handle_codec_compression(
+                    processed_buffer, chunk_meta, end_layer - 1, request_id
+                )
+                
+                # Release buffer immediately
+                del processed_buffer
+                
+                # Store chunk
+                chunk_size_bytes = compressed_tensor.numel() * compressed_tensor.element_size()
+                total_compressed_size += chunk_size_bytes
+                chunk_meta["compressed_size"] = chunk_size_bytes
+                
+                chunks.append(compressed_tensor)
+                chunk_metadata_list.append(chunk_meta)
+                
+                log_debug(f"[CompressionManager] Chunk {chunk_idx+1} compressed: {chunk_size_bytes/(1024**2):.2f} MB")
+            
+            # Return chunked result
+            log_info(f"[CompressionManager] Chunked compression complete: {original_size/(1024**2):.2f} MB -> {total_compressed_size/(1024**2):.2f} MB ({num_chunks} chunks)")
+            
+            return CompressedKVData(
+                request_id=request_id,
+                layer_id=num_layers - 1,
+                compressed_tensor=None,  # No single tensor
+                metadata={
+                    "request_id": request_id,
+                    "original_size": original_size,
+                    "num_layers": num_layers,
+                    "is_chunked": True,
+                    "num_chunks": num_chunks,
+                    **metadata,
+                },
+                original_size=original_size,
+                compressed_size=total_compressed_size,
+                is_chunked=True,
+                chunks=chunks,
+                chunk_metadata=chunk_metadata_list,
+            )
+        
+        except Exception as e:
+            log_error(f"[CompressionManager] Chunked compression failed for {request_id}: {e}")
+            import traceback
+            log_error(f"[CompressionManager] Traceback: {traceback.format_exc()}")
+            return None
+    
     def decompress_all_layers(
         self,
         compressed_data: CompressedKVData,
         config: CompressionConfig,
-    ) -> Optional[Any]:  # Returns torch.Tensor [num_layers, 2, ...]
+    ) -> Optional[Any]:  # Returns torch.Tensor [num_layers, 2, ...] or List[torch.Tensor] for chunked
         """
         Optimized fast path: decompress all layers with minimal overhead.
         Uses pre-allocation and tight loops to minimize memory peaks.
+        
+        For chunked data, returns a List[torch.Tensor] to avoid peak memory from concatenation.
         
         Args:
             compressed_data: CompressedKVData from compress_all_layers()
             
         Returns:
-            Decompressed KV cache tensor [num_layers, 2, ...], None if decompression failed
+            Decompressed KV cache tensor [num_layers, 2, ...], or List of chunk tensors if is_chunked
         """
         self.update_config(config)
 
         if not self.config.enabled or not self.config.pipeline:
             return None
+        
+        # Handle chunked data
+        if compressed_data.is_chunked:
+            return self._decompress_all_layers_chunked(compressed_data)
         
         try:
             import torch
@@ -568,6 +776,113 @@ class CompressionManager:
             
         except Exception as e:
             log_error(f"[CompressionManager] All-layer decompression failed for {compressed_data.request_id}: {e}")
+            import traceback
+            log_error(f"[CompressionManager] Traceback: {traceback.format_exc()}")
+            return None
+    
+    def _decompress_all_layers_chunked(
+        self,
+        compressed_data: CompressedKVData,
+    ) -> Optional[List[torch.Tensor]]:
+        """
+        Decompress chunked KV cache data.
+        Returns a list of decompressed chunk tensors to avoid memory peak from concatenation.
+        Each chunk is [chunk_layers, 2, blocks, block_size, heads, head_size].
+        """
+        if not compressed_data.chunks or not compressed_data.chunk_metadata:
+            log_error(f"[CompressionManager] Chunked data missing chunks or metadata")
+            return None
+        
+        num_chunks = len(compressed_data.chunks)
+        log_info(f"[CompressionManager] Decompressing {num_chunks} chunks")
+        
+        decompressed_chunks = []
+        
+        try:
+            for chunk_idx in range(num_chunks):
+                chunk_tensor = compressed_data.chunks[chunk_idx]
+                chunk_meta = compressed_data.chunk_metadata[chunk_idx]
+                
+                start_layer = chunk_meta.get("start_layer_id", 0)
+                chunk_num_layers = chunk_meta.get("num_layers", 8)
+                
+                log_debug(f"[CompressionManager] Decompressing chunk {chunk_idx+1}/{num_chunks} (layers {start_layer}-{start_layer+chunk_num_layers-1})")
+                
+                # Create a temporary CompressedKVData for this chunk
+                chunk_compressed = CompressedKVData(
+                    request_id=compressed_data.request_id,
+                    layer_id=start_layer + chunk_num_layers - 1,
+                    compressed_tensor=chunk_tensor,
+                    metadata=chunk_meta,
+                    original_size=chunk_meta.get("original_size", 0),
+                    compressed_size=chunk_meta.get("compressed_size", 0),
+                )
+                
+                # Decompress this chunk using codec
+                current_data = self._handle_codec_decompression(
+                    chunk_tensor, chunk_compressed, self.config.pipeline, start_layer
+                )
+                
+                if not isinstance(current_data, torch.Tensor):
+                    log_error(f"[CompressionManager] Chunk {chunk_idx} decode failed")
+                    return None
+                
+                # Determine target shape for this chunk
+                target_layer_shape = (
+                    current_data.shape[1], # 2
+                    current_data.shape[3], # blocks
+                    current_data.shape[4], # block_size
+                    current_data.shape[2], # heads
+                    current_data.shape[5], # head_size
+                )
+                chunk_target_shape = (chunk_num_layers,) + target_layer_shape
+                
+                # Determine dtype
+                target_dtype = getattr(torch, chunk_meta.get("original_dtype", "bfloat16"), torch.bfloat16)
+                
+                # Allocate buffer for this chunk
+                chunk_buffer = torch.empty(
+                    chunk_target_shape,
+                    dtype=target_dtype,
+                    device=current_data.device
+                )
+                
+                # Dequantize and transform each layer in this chunk
+                for i in range(chunk_num_layers):
+                    layer_id = start_layer + i
+                    current_layer_data = current_data[i].permute(0, 2, 3, 1, 4)
+                    
+                    if "quantizer" in self.config.pipeline:
+                        quantization_params = chunk_meta.get("quantization_params", [])[i]
+                        if quantization_params:
+                            current_layer_data = self.quantizer.dequantize(
+                                layer_id,
+                                current_layer_data,
+                                quantization_params,
+                                **self.config.quantizer_config
+                            )
+                    
+                    if "transformer" in self.config.pipeline:
+                        current_layer_data = self.transformer.inverse(
+                            layer_id,
+                            current_layer_data,
+                            **self.config.transformer_config
+                        )
+                    
+                    chunk_buffer[i].copy_(current_layer_data)
+                    del current_layer_data
+                
+                # Release codec-decoded data
+                del current_data
+                
+                decompressed_chunks.append(chunk_buffer)
+                log_debug(f"[CompressionManager] Chunk {chunk_idx+1} decompressed: {chunk_buffer.numel() * chunk_buffer.element_size()/(1024**2):.2f} MB")
+            
+            log_info(f"[CompressionManager] Chunked decompression complete: {num_chunks} chunks")
+            return decompressed_chunks
+        
+        except Exception as e:
+            log_error(f"[CompressionManager] Chunked decompression failed: {e}")
             import traceback
             log_error(f"[CompressionManager] Traceback: {traceback.format_exc()}")
             return None

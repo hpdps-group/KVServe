@@ -19,6 +19,7 @@ from kvserve.engine.utils import (
     StepOutput,
     KVTransferStatus,
 )
+from kvserve.engine.service_config import ServiceConfig
 from kvserve.engine.block_manager import BlockManager, BlockLocation
 from kvserve.engine.worker import Worker
 from kvserve.engine.kv_transfer import KVTransferManager
@@ -144,6 +145,7 @@ class BaseStageEngine:
         nccl_world_size: Optional[int] = None,
         max_model_len: int = 32768,
         compression_config: Optional[Dict[str, Any]] = None,
+        service_config: Optional[ServiceConfig] = None,
     ):
         self.stage = stage
         self.model_path = model_path
@@ -160,6 +162,7 @@ class BaseStageEngine:
         self.nccl_world_size = nccl_world_size
         self.max_model_len = max_model_len
         self.compression_config = compression_config
+        self.service_config = service_config or ServiceConfig()
         
         # Workers
         self.workers: List[ray.ObjectRef] = []
@@ -189,6 +192,27 @@ class BaseStageEngine:
         
         # Load balancing
         self.current_worker_index = 0
+    
+    async def update_service_config(self, **kwargs):
+        """
+        Update service configuration for all workers
+        
+        Args:
+            **kwargs: Service config parameters to update
+        """
+        if not self.workers:
+            self.service_config.update(**kwargs)
+            return
+        
+        # Update local config
+        self.service_config.update(**kwargs)
+        
+        # Update all workers
+        await asyncio.gather(*[
+            worker.update_service_config.remote(**kwargs)
+            for worker in self.workers
+        ])
+        log_info(f"[{self.stage.value}Engine] Service config updated for all workers: {kwargs}")
     
     def get_next_worker(self):
         """Get next worker using round-robin"""
@@ -251,6 +275,7 @@ class BaseStageEngine:
                 nccl_init_method=self.nccl_init_method,
                 max_model_len=self.max_model_len,
                 compression_config=self.compression_config,
+                service_config=self.service_config,
             )
             
             self.workers.append(worker)
@@ -1074,11 +1099,11 @@ class DecodeEngine(BaseStageEngine):
                             await self._cleanup_request(request, reason="transfer_failed")
                             continue
                     except Exception as e:
-                            log_error(f"[Decode] KV cache transfer error: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            await self._cleanup_request(request, reason="transfer_exception")
-                            continue
+                        log_error(f"[Decode] KV cache transfer error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        await self._cleanup_request(request, reason="transfer_exception")
+                        continue
                 
                 # Add to scheduler
                 self.scheduler.add_request(request)
@@ -1221,10 +1246,10 @@ class DecodeEngine(BaseStageEngine):
                 worker = self.get_next_worker()
                 if not worker:
                     return
-                outputs = await worker.step_decode.remote(
-                    batched_requests,
-                    kv_block_tables
-                )
+            outputs = await worker.step_decode.remote(
+                batched_requests,
+                kv_block_tables
+            )
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             import traceback
@@ -1475,7 +1500,7 @@ class DecodeEngine(BaseStageEngine):
                 worker = self.get_next_worker()
                 if not worker:
                     return
-                outputs = await worker.step_decode.remote(batched_requests, kv_block_tables)
+            outputs = await worker.step_decode.remote(batched_requests, kv_block_tables)
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             for req in batched_requests.requests:

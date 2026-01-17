@@ -17,6 +17,7 @@ from kvserve.manager.compression_manager import (
     CompressionConfig,
     CompressionManager,
     CompressedKVData,
+    get_default_compression_config,
 )
 from kvserve.transformer import KVServeTransformer
 from kvserve.quantizer import KVServeQuantizer
@@ -29,7 +30,7 @@ def build_compression_manager(config_dict: Optional[Dict[str, Any]]) -> Optional
     Returns None when compression is disabled or config is missing.
     """
     if not config_dict:
-        return None
+        config_dict = get_default_compression_config()
 
     config = CompressionConfig(**config_dict)
     if not config.enabled or not config.pipeline:

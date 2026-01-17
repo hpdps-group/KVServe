@@ -1,0 +1,297 @@
+{
+  "library_metadata": {
+    "model_name": "Llama-3.1-8B-Instruct",
+    "dataset": "longbench_qasper",
+    "created_at": "2026-01-16",
+    "num_profiles": 9,
+    "description": "Example profile library with 3 accuracy buckets and synthetic data"
+  },
+  
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [0.90, 0.93],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama3.1-8b_example_P1",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Aggressive compression: Int4 + LZ4"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "int4",
+              "block_size": 128
+            },
+            "codec_config": {
+              "type": "nvcomp_lz4",
+              "chunk_size": 65536
+            },
+            "pipeline": ["quantize", "codec"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.2,
+            "encode_speed_mbps": 320.0,
+            "decode_speed_mbps": 380.0,
+            "harmonic_speed_mbps": 346.3,
+            "critical_bandwidth_mbps": 263.6
+          },
+          "quality_metrics": {
+            "accuracy": 0.905,
+            "metric_name": "ROUGE-L"
+          }
+        },
+        {
+          "profile_id": "llama3.1-8b_example_P2",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Moderate compression: Int8 + LZ4"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "int8",
+              "block_size": 128
+            },
+            "codec_config": {
+              "type": "nvcomp_lz4",
+              "chunk_size": 65536
+            },
+            "pipeline": ["quantize", "codec"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 2.8,
+            "encode_speed_mbps": 450.0,
+            "decode_speed_mbps": 520.0,
+            "harmonic_speed_mbps": 482.5,
+            "critical_bandwidth_mbps": 310.7
+          },
+          "quality_metrics": {
+            "accuracy": 0.923,
+            "metric_name": "ROUGE-L"
+          }
+        },
+        {
+          "profile_id": "llama3.1-8b_example_P3",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Light compression: FP16 + LZ4"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "fp16",
+              "block_size": 128
+            },
+            "codec_config": {
+              "type": "nvcomp_lz4",
+              "chunk_size": 65536
+            },
+            "pipeline": ["quantize", "codec"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 1.9,
+            "encode_speed_mbps": 580.0,
+            "decode_speed_mbps": 650.0,
+            "harmonic_speed_mbps": 612.2,
+            "critical_bandwidth_mbps": 290.0
+          },
+          "quality_metrics": {
+            "accuracy": 0.928,
+            "metric_name": "ROUGE-L"
+          }
+        }
+      ],
+      
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [0.0, 0.004],
+          "B_range": [250.0, 999999.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P3",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P2",
+            "llama3.1-8b_example_P3"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [0.004, 0.01],
+          "B_range": [100.0, 250.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P2",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P1",
+            "llama3.1-8b_example_P2",
+            "llama3.1-8b_example_P3"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [0.01, 0.1],
+          "B_range": [10.0, 100.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P1",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P1",
+            "llama3.1-8b_example_P2"
+          ]
+        }
+      ]
+    },
+    
+    {
+      "bucket_id": 1,
+      "acc_range": [0.93, 0.96],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama3.1-8b_example_P4",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Moderate compression: Int8 + Snappy"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "int8",
+              "block_size": 128
+            },
+            "codec_config": {
+              "type": "nvcomp_snappy",
+              "chunk_size": 65536
+            },
+            "pipeline": ["quantize", "codec"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 2.5,
+            "encode_speed_mbps": 500.0,
+            "decode_speed_mbps": 550.0,
+            "harmonic_speed_mbps": 523.8,
+            "critical_bandwidth_mbps": 314.3
+          },
+          "quality_metrics": {
+            "accuracy": 0.941,
+            "metric_name": "ROUGE-L"
+          }
+        },
+        {
+          "profile_id": "llama3.1-8b_example_P5",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Light compression: FP16 + Snappy"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "fp16",
+              "block_size": 128
+            },
+            "codec_config": {
+              "type": "nvcomp_snappy",
+              "chunk_size": 65536
+            },
+            "pipeline": ["quantize", "codec"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 1.7,
+            "encode_speed_mbps": 620.0,
+            "decode_speed_mbps": 680.0,
+            "harmonic_speed_mbps": 648.6,
+            "critical_bandwidth_mbps": 267.2
+          },
+          "quality_metrics": {
+            "accuracy": 0.952,
+            "metric_name": "ROUGE-L"
+          }
+        }
+      ],
+      
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [0.0, 0.005],
+          "B_range": [200.0, 999999.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P5",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P5"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [0.005, 0.1],
+          "B_range": [10.0, 200.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P4",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P4",
+            "llama3.1-8b_example_P5"
+          ]
+        }
+      ]
+    },
+    
+    {
+      "bucket_id": 2,
+      "acc_range": [0.96, 1.0],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama3.1-8b_example_P6",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "longbench_qasper",
+            "description": "Minimal compression: FP16 only"
+          },
+          "compression_config": {
+            "enabled": true,
+            "transformer_config": null,
+            "quantizer_config": {
+              "type": "fp16",
+              "block_size": 128
+            },
+            "codec_config": null,
+            "pipeline": ["quantize"],
+            "min_compress_size": 1048576
+          },
+          "performance_metrics": {
+            "compression_ratio": 1.4,
+            "encode_speed_mbps": 700.0,
+            "decode_speed_mbps": 750.0,
+            "harmonic_speed_mbps": 724.1,
+            "critical_bandwidth_mbps": 206.9
+          },
+          "quality_metrics": {
+            "accuracy": 0.975,
+            "metric_name": "ROUGE-L"
+          }
+        }
+      ],
+      
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [0.0, 0.1],
+          "B_range": [10.0, 999999.0],
+          "model_optimal_profile_id": "llama3.1-8b_example_P6",
+          "candidate_profile_ids": [
+            "llama3.1-8b_example_P6"
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+

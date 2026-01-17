@@ -103,7 +103,10 @@ class SimulatorBackend:
         pcie_gbps: float = 24.0,
         io_jitter_ms: float = 0.5,
         # Compression
-        compression_config: Optional[Dict[str, Any]] = None,
+        compression_config = None,  # Can be Dict, "default", None, or OnlineController instance
+        service_config = None,  # Service parameters for controller mode
+        # Simulation KV storage
+        simulation_kv_dir: str = "./simulation_kv",  # Directory for KV cache files in simulation mode
         # Other
         log_level: str = "INFO",
     ):
@@ -115,6 +118,8 @@ class SimulatorBackend:
         self.dtype = dtype
         self.log_level = log_level
         self.compression_config = compression_config
+        self.service_config = service_config
+        self.simulation_kv_dir = simulation_kv_dir
         
         # Network simulator (for time calculation only)
         self.network_sim = NetworkSimulator(
@@ -144,6 +149,26 @@ class SimulatorBackend:
         log_info("[Simulator] Simulator initialized")
         log_info(f"  Model: {self.model_path}")
         log_info(f"  TP: {self.tensor_parallel_size}")
+    
+    async def update_service_config(self, **kwargs):
+        """
+        Update service configuration for all engines
+        
+        Args:
+            **kwargs: Service config parameters to update (bandwidth_mbps, slo_ms, etc.)
+        """
+        if self.service_config:
+            self.service_config.update(**kwargs)
+        
+        # Update prefill engine if exists
+        if self.prefill_engine:
+            await self.prefill_engine.update_service_config(**kwargs)
+        
+        # Update decode engine if exists
+        if self.decode_engine:
+            await self.decode_engine.update_service_config(**kwargs)
+        
+        log_info(f"[Simulator] Service config updated: {kwargs}")
     
     async def run_prefill_only(
         self,
@@ -195,8 +220,11 @@ class SimulatorBackend:
             events[event.request_id] = event
         
         # Create simulation directory
-        sim_dir = "./simulation_kv"
+        sim_dir = self.simulation_kv_dir
+        # Convert to absolute path
+        sim_dir = os.path.abspath(sim_dir)
         os.makedirs(sim_dir, exist_ok=True)
+        log_info(f"[Simulator] KV cache directory: {sim_dir}")
         
         # Create KV transfer manager in SIMULATION mode
         kv_transfer_manager = KVTransferManager(
@@ -233,6 +261,7 @@ class SimulatorBackend:
             nccl_world_size=self.tensor_parallel_size,  # Only prefill workers
             max_batch_size=self.max_batch_size,
             compression_config=self.compression_config,
+            service_config=self.service_config,
         )
         
         await self.prefill_engine.initialize()
@@ -436,7 +465,10 @@ class SimulatorBackend:
             )
         
         # Create simulation directory
-        sim_dir = "./simulation_kv"
+        sim_dir = self.simulation_kv_dir
+        # Convert to absolute path
+        sim_dir = os.path.abspath(sim_dir)
+        log_info(f"[Simulator] KV cache directory: {sim_dir}")
         
         # Create KV transfer manager and load manifest
         kv_transfer_manager = KVTransferManager(
@@ -473,6 +505,7 @@ class SimulatorBackend:
             nccl_world_size=self.tensor_parallel_size,  # Only decode workers
             max_batch_size=self.max_batch_size,
             compression_config=self.compression_config,
+            service_config=self.service_config,
         )
         
         await self.decode_engine.initialize()

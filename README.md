@@ -58,6 +58,24 @@ Note: Some packages like `flash_attn` may require compilation. See individual pa
 
 ## Usage
 
+### 0. Simulator Test
+
+Run the simulator with the test script:
+
+```bash
+# Run both prefill + decode (TP=1)
+python test/test_simulator.py
+
+# Run only prefill or only decode
+python test/test_simulator.py prefill-only --kv-dir ./my_kv_cache
+python test/test_simulator.py decode-only --kv-dir ./my_kv_cache
+```
+
+Compression modes (configured in `test/test_simulator.py`):
+- **default**: Use built-in default compression config
+- **custom**: Provide an explicit compression config dict
+- **controller**: Use OnlineController to select profiles dynamically
+
 ### 1. Standard Inference Test
 
 Run basic PD separation inference test:
