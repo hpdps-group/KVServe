@@ -1,0 +1,802 @@
+[
+    {
+        "config_id": 0,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 95.93,
+        "compression_ratio": 9.1784
+    },
+    {
+        "config_id": 1,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 6,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 99.47,
+        "compression_ratio": 8.26
+    },
+    {
+        "config_id": 2,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 12,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 99.78,
+        "compression_ratio": 7.8763
+    },
+    {
+        "config_id": 3,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 12,
+            "high_value_max_value": 12,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 99.91,
+        "compression_ratio": 7.6617
+    },
+    {
+        "config_id": 4,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 8,
+            "high_value_max_value": 10,
+            "low_key_max_value": 8,
+            "low_value_max_value": 8,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 100.83,
+        "compression_ratio": 6.8009
+    },
+    {
+        "config_id": 5,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 16,
+            "high_value_max_value": 10,
+            "low_key_max_value": 8,
+            "low_value_max_value": 8,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 101.16,
+        "compression_ratio": 6.7555
+    },
+    {
+        "config_id": 6,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 96.34,
+        "compression_ratio": 10.3029
+    },
+    {
+        "config_id": 7,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 8,
+            "high_value_max_value": 5,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 96.54,
+        "compression_ratio": 10.2532
+    },
+    {
+        "config_id": 8,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 10,
+            "high_value_max_value": 5,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 97.2,
+        "compression_ratio": 10.1309
+    },
+    {
+        "config_id": 9,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.6,
+            "high_key_max_value": 8,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 98.75,
+        "compression_ratio": 9.2594
+    },
+    {
+        "config_id": 10,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 16,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 100.59,
+        "compression_ratio": 9.1684
+    },
+    {
+        "config_id": 11,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 12,
+            "high_value_max_value": 8,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 100.94,
+        "compression_ratio": 9.1618
+    },
+    {
+        "config_id": 12,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 12,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 101.07,
+        "compression_ratio": 7.079
+    },
+    {
+        "config_id": 13,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 12,
+            "high_value_max_value": 8,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 101.12,
+        "compression_ratio": 6.5283
+    },
+    {
+        "config_id": 14,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 95.93,
+        "compression_ratio": 6.0446
+    },
+    {
+        "config_id": 15,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 6,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 99.47,
+        "compression_ratio": 5.715
+    },
+    {
+        "config_id": 16,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 12,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 99.78,
+        "compression_ratio": 5.7862
+    },
+    {
+        "config_id": 17,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 12,
+            "high_value_max_value": 12,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 99.91,
+        "compression_ratio": 5.6786
+    },
+    {
+        "config_id": 18,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 8,
+            "high_value_max_value": 10,
+            "low_key_max_value": 8,
+            "low_value_max_value": 8,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 100.83,
+        "compression_ratio": 5.2778
+    },
+    {
+        "config_id": 19,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 16,
+            "high_value_max_value": 10,
+            "low_key_max_value": 8,
+            "low_value_max_value": 8,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 101.16,
+        "compression_ratio": 5.1324
+    },
+    {
+        "config_id": 20,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 96.34,
+        "compression_ratio": 6.3625
+    },
+    {
+        "config_id": 21,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 8,
+            "high_value_max_value": 5,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 96.54,
+        "compression_ratio": 6.4126
+    },
+    {
+        "config_id": 22,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 10,
+            "high_value_max_value": 5,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 97.2,
+        "compression_ratio": 6.3795
+    },
+    {
+        "config_id": 23,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.6,
+            "high_key_max_value": 8,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 98.75,
+        "compression_ratio": 6.0907
+    },
+    {
+        "config_id": 24,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 16,
+            "high_value_max_value": 6,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 100.59,
+        "compression_ratio": 6.0084
+    },
+    {
+        "config_id": 25,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 12,
+            "high_value_max_value": 8,
+            "low_key_max_value": 6,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 100.94,
+        "compression_ratio": 5.9885
+    },
+    {
+        "config_id": 26,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 12,
+            "high_value_max_value": 6,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 101.07,
+        "compression_ratio": 4.9073
+    },
+    {
+        "config_id": 27,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.1,
+            "high_key_max_value": 12,
+            "high_value_max_value": 8,
+            "low_key_max_value": 8,
+            "low_value_max_value": 6,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 101.12,
+        "compression_ratio": 4.6542
+    },
+    {
+        "config_id": 28,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 12,
+            "low_value_max_value": 12,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 102.72,
+        "compression_ratio": 5.26
+    },
+    {
+        "config_id": 29,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 32,
+            "high_value_max_value": 32,
+            "low_key_max_value": 16,
+            "low_value_max_value": 16,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 99.23,
+        "compression_ratio": 4.53
+    },
+    {
+        "config_id": 30,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 12,
+            "low_value_max_value": 12,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 102.72,
+        "compression_ratio": 4.1333
+    },
+    {
+        "config_id": 31,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 32,
+            "high_value_max_value": 32,
+            "low_key_max_value": 16,
+            "low_value_max_value": 16,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 99.23,
+        "compression_ratio": 3.7349
+    }      
+]
