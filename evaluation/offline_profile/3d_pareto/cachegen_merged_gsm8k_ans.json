@@ -1,0 +1,38 @@
+[
+    {
+        "transform_type": "none",
+        "max_maxvalue": 32,
+        "mid_maxvalue": 16,
+        "min_maxvalue": 12,
+        "quant_level": 2,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 4.4654,
+        "accuracy": 99.23,
+        "config_id": 0,
+        "latency": 17.9
+    },
+    {
+        "transform_type": "none",
+        "max_maxvalue": 32,
+        "mid_maxvalue": 16,
+        "min_maxvalue": 12,
+        "quant_level": 1,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 5.1334,
+        "accuracy": 102.72,
+        "config_id": 0,
+        "latency": 17.9
+    }    
+]

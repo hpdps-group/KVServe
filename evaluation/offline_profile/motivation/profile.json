@@ -1,0 +1,98 @@
+[
+    {
+        "transform_type": "hadamard",
+        "heads_selection": 0.1,
+        "high_key_max_value": 8,
+        "high_value_max_value": 6,
+        "low_key_max_value": 8,
+        "low_value_max_value": 4,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 8.135409999999998,
+        "transform_type_id": 0,
+        "transform_type_0": true,
+        "axis_key_id": 0,
+        "axis_key_0": true,
+        "axis_value_id": 0,
+        "axis_value_0": true,
+        "accuracy": 103.84,
+        "config_id": 13
+    },
+    {
+        "transform_type": "hadamard",
+        "heads_selection": 0.1,
+        "high_key_max_value": 10,
+        "high_value_max_value": 5,
+        "low_key_max_value": 8,
+        "low_value_max_value": 3,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 0.0,
+        "transform_type_id": 0,
+        "transform_type_0": true,
+        "axis_key_id": 0,
+        "axis_key_0": true,
+        "axis_value_id": 0,
+        "axis_value_0": true,
+        "accuracy": 102.32,
+        "config_id": 27
+    },
+    {
+        "transform_type": "hadamard",
+        "heads_selection": 0.1,
+        "high_key_max_value": 8,
+        "high_value_max_value": 6,
+        "low_key_max_value": 4,
+        "low_value_max_value": 6,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 0.0,
+        "transform_type_id": 0,
+        "transform_type_0": true,
+        "axis_key_id": 0,
+        "axis_key_0": true,
+        "axis_value_id": 0,
+        "axis_value_0": true,
+        "accuracy": 102.99,
+        "config_id": 15
+    },
+    {
+        "transform_type": "hadamard",
+        "heads_selection": 0.1,
+        "high_key_max_value": 6,
+        "high_value_max_value": 8,
+        "low_key_max_value": 6,
+        "low_value_max_value": 4,
+        "axis_key": [
+            2
+        ],
+        "axis_value": [
+            1,
+            3
+        ],
+        "cr": 0.0,
+        "transform_type_id": 0,
+        "transform_type_0": true,
+        "axis_key_id": 0,
+        "axis_key_0": true,
+        "axis_value_id": 0,
+        "axis_value_0": true,
+        "accuracy": 102.21,
+        "config_id": 43
+    }
+]
