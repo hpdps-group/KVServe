@@ -1246,10 +1246,10 @@ class DecodeEngine(BaseStageEngine):
                 worker = self.get_next_worker()
                 if not worker:
                     return
-            outputs = await worker.step_decode.remote(
-                batched_requests,
-                kv_block_tables
-            )
+                outputs = await worker.step_decode.remote(
+                    batched_requests,
+                    kv_block_tables
+                )
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             import traceback

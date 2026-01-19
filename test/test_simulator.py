@@ -61,13 +61,13 @@ MODEL_PATH = "/root/ssd/Llama3.1-8B-Instruct"
 
 # Prefill engine settings
 PREFILL_GPU_MEMORY_UTILIZATION = 0.75
-PREFILL_MAX_MODEL_LEN = 5000
+PREFILL_MAX_MODEL_LEN = 10000
 PREFILL_MAX_BATCH_SIZE = 4
 
 # Decode engine settings
 DECODE_GPU_MEMORY_UTILIZATION = 0.75
-DECODE_MAX_MODEL_LEN = 5000
-DECODE_MAX_BATCH_SIZE = 4
+DECODE_MAX_MODEL_LEN = 10000
+DECODE_MAX_BATCH_SIZE = 10
 
 # Common settings
 DTYPE = "float16"
@@ -100,7 +100,7 @@ DECODE_RESULTS_DIR = "./sim_timestamps"
 # COMPRESSION CONFIGURATION - CHANGE HERE TO SWITCH MODES
 # ============================================================================
 
-# Select compression mode: "custom", "default", or "controller"
+# Select compression mode: "none", "custom", "default", or "controller"
 COMPRESSION_MODE = "default"  # <-- CHANGE THIS TO SWITCH MODES
 
 # -------- CUSTOM MODE CONFIG --------
@@ -471,6 +471,8 @@ async def main():
                 epsilon=0.1
             )
             service_config = SERVICE_CONFIG
+        elif compression_mode == "none":
+            compression_config = {"enabled": False}
         
         worker_idx = sys.argv.index('--worker')
         stage = sys.argv[worker_idx + 1]  # 'prefill' or 'decode'
@@ -510,28 +512,33 @@ async def main():
     parser.add_argument("--request-rate", type=float, default=5.0, help="Request rate (RPS)")
     parser.add_argument("--lmeval-task", type=str, default=None, help="lm-eval-harness task name for prompts")
     parser.add_argument("--kv-dir", type=str, default=None, help="KV cache storage directory")
+    parser.add_argument("--compression", action="store_true", help="Enable KV compression")
     parser.add_argument("--prefill-results-dir", type=str, default=None, help="Directory to save prefill timestamp pkl files")
     parser.add_argument("--decode-results-dir", type=str, default=None, help="Directory to save decode timestamp pkl files")
     parser.add_argument("--prefill-results-file", type=str, default=None, help="Prefill timestamp pkl file to use for decode")
     args = parser.parse_args()
     
-    # Resolve compression config based on global mode setting
+    # Resolve compression config based on CLI flag + global mode
     compression_config = None
     service_config = None
+    compression_mode = "none"
     
-    if COMPRESSION_MODE == "custom":
+    if args.compression and COMPRESSION_MODE != "none":
+        compression_mode = COMPRESSION_MODE
+    
+    if compression_mode == "custom":
         compression_config = CUSTOM_COMPRESSION_CONFIG
         print(f"\n{'='*60}")
         print("COMPRESSION: Custom Mode")
         print(f"{'='*60}")
         print(f"Pipeline: {compression_config['pipeline']}")
-    elif COMPRESSION_MODE == "default":
+    elif compression_mode == "default":
         compression_config = "default"
         print(f"\n{'='*60}")
         print("COMPRESSION: Default Mode")
         print(f"{'='*60}")
         print("Using system default compression config")
-    elif COMPRESSION_MODE == "controller":
+    elif compression_mode == "controller":
         compression_config = OnlineController(
             library_path=CONTROLLER_PROFILE_PATH,
             epsilon=0.1
@@ -593,7 +600,7 @@ async def main():
             'prefill',
             1,
             '0',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             str(args.num_requests),
@@ -628,7 +635,7 @@ async def main():
             'decode',
             1,
             '1',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             final_file
@@ -657,7 +664,7 @@ async def main():
             'prefill',
             1,
             '0',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             str(args.num_requests),
@@ -673,7 +680,7 @@ async def main():
             'decode',
             1,
             '1',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             final_file
@@ -700,7 +707,7 @@ async def main():
             'prefill',
             2,
             '0,1',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             str(args.num_requests),
@@ -716,7 +723,7 @@ async def main():
             'decode',
             2,
             '0,1',
-            COMPRESSION_MODE,
+            compression_mode,
             kv_dir,
             intermediate_file,
             final_file
