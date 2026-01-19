@@ -87,3 +87,4 @@ class Profile:
                 f"acc={self.accuracy:.3f})")
 
 
+

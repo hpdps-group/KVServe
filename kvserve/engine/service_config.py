@@ -36,3 +36,4 @@ class ServiceConfig:
             if hasattr(self, key):
                 setattr(self, key, value)
 
+

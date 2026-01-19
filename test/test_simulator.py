@@ -19,10 +19,10 @@ python test/test_simulator.py tp1 --num-requests 50 --request-rate 10.0
 python test/test_simulator.py tp1 --lmeval-task longbench_qasper
 
 # Run only prefill stage (save KV to directory)
-python test/test_simulator.py prefill-only --kv-dir ./my_kv_cache
+python test/test_simulator.py prefill-only --kv-dir ./my_kv_cache --prefill-results-dir ./sim_timestamps
 
-# Run only decode stage (load KV from directory)
-python test/test_simulator.py decode-only --kv-dir ./my_kv_cache
+# Run only decode stage (load KV from directory + prefill timestamp file)
+python test/test_simulator.py decode-only --kv-dir ./my_kv_cache --prefill-results-file ./sim_timestamps/prefill_output.pkl
 
 CONFIGURATION:
 ==============
@@ -89,8 +89,12 @@ LOG_LEVEL = "INFO"
 # KV cache storage directory (for simulation mode)
 KV_STORAGE_DIR = "./simulation_kv"
 
-# Output directory for pkl/csv artifacts
+# Output directory for csv artifacts
 OUTPUT_DIR = "./sim_outputs"
+
+# Timestamp directories for prefill/decode pkl artifacts
+PREFILL_RESULTS_DIR = "./sim_timestamps"
+DECODE_RESULTS_DIR = "./sim_timestamps"
 
 # ============================================================================
 # COMPRESSION CONFIGURATION - CHANGE HERE TO SWITCH MODES
@@ -506,6 +510,9 @@ async def main():
     parser.add_argument("--request-rate", type=float, default=5.0, help="Request rate (RPS)")
     parser.add_argument("--lmeval-task", type=str, default=None, help="lm-eval-harness task name for prompts")
     parser.add_argument("--kv-dir", type=str, default=None, help="KV cache storage directory")
+    parser.add_argument("--prefill-results-dir", type=str, default=None, help="Directory to save prefill timestamp pkl files")
+    parser.add_argument("--decode-results-dir", type=str, default=None, help="Directory to save decode timestamp pkl files")
+    parser.add_argument("--prefill-results-file", type=str, default=None, help="Prefill timestamp pkl file to use for decode")
     args = parser.parse_args()
     
     # Resolve compression config based on global mode setting
@@ -550,16 +557,22 @@ async def main():
     
     test_mode = args.mode
     kv_dir = args.kv_dir or KV_STORAGE_DIR
+    prefill_results_dir = args.prefill_results_dir or PREFILL_RESULTS_DIR
+    decode_results_dir = args.decode_results_dir or DECODE_RESULTS_DIR
     
     print("\n" + "="*80)
     print("PD SEPARATION SIMULATOR TEST")
     print("="*80)
-    # Ensure output directory exists
+    # Ensure output directories exist
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(prefill_results_dir, exist_ok=True)
+    os.makedirs(decode_results_dir, exist_ok=True)
 
     print(f"\nModel: {MODEL_PATH}")
     print(f"Test mode: {test_mode}")
     print(f"KV directory: {kv_dir}")
+    print(f"Prefill results dir: {prefill_results_dir}")
+    print(f"Decode results dir: {decode_results_dir}")
     print(f"Requests: {args.num_requests}, Request rate: {args.request_rate} rps")
     if args.lmeval_task:
         print(f"Prompts: lm-eval task '{args.lmeval_task}'")
@@ -573,7 +586,7 @@ async def main():
         print("# PREFILL ONLY MODE")
         print("#"*80)
         
-        intermediate_file = os.path.join(OUTPUT_DIR, "prefill_output.pkl")
+        intermediate_file = os.path.join(prefill_results_dir, "prefill_output.pkl")
         
         # Default to TP=1 for single-stage runs
         ret = run_stage_in_subprocess(
@@ -601,13 +614,13 @@ async def main():
         print("# DECODE ONLY MODE")
         print("#"*80)
         
-        intermediate_file = "prefill_output.pkl"
-        final_file = os.path.join(OUTPUT_DIR, "decode_output.pkl")
+        intermediate_file = args.prefill_results_file or os.path.join(prefill_results_dir, "prefill_output.pkl")
+        final_file = os.path.join(decode_results_dir, "decode_output.pkl")
         csv_file = os.path.join(OUTPUT_DIR, "sim_results_decode_only.csv")
         
         if not os.path.exists(intermediate_file):
             print(f"❌ Intermediate file not found: {intermediate_file}")
-            print(f"   Please run prefill-only mode first or specify correct --kv-dir")
+            print(f"   Please run prefill-only mode first or specify --prefill-results-file")
             return
         
         # Default to TP=1 for single-stage runs
@@ -635,8 +648,8 @@ async def main():
         print("# TEST 1: TP=1 (Baseline)")
         print("#"*80)
         
-        intermediate_file = os.path.join(OUTPUT_DIR, "prefill_tp1.pkl")
-        final_file = os.path.join(OUTPUT_DIR, "decode_tp1.pkl")
+        intermediate_file = os.path.join(prefill_results_dir, "prefill_tp1.pkl")
+        final_file = os.path.join(decode_results_dir, "decode_tp1.pkl")
         csv_file = os.path.join(OUTPUT_DIR, "sim_results_tp1.csv")
         
         # Run prefill (GPU 0)
@@ -678,8 +691,8 @@ async def main():
         print("# TEST 2: TP=2 (Distributed)")
         print("#"*80)
         
-        intermediate_file = os.path.join(OUTPUT_DIR, "prefill_tp2.pkl")
-        final_file = os.path.join(OUTPUT_DIR, "decode_tp2.pkl")
+        intermediate_file = os.path.join(prefill_results_dir, "prefill_tp2.pkl")
+        final_file = os.path.join(decode_results_dir, "decode_tp2.pkl")
         csv_file = os.path.join(OUTPUT_DIR, "sim_results_tp2.csv")
         
         # Run prefill (GPU 0,1)
@@ -721,11 +734,11 @@ async def main():
         print("COMPARISON: TP=1 vs TP=2")
         print("="*80)
         
-        with open("sim_results_tp1.csv", "r") as f:
+        with open(os.path.join(OUTPUT_DIR, "sim_results_tp1.csv"), "r") as f:
             reader = csv.DictReader(f)
             results_tp1 = list(reader)
         
-        with open("sim_results_tp2.csv", "r") as f:
+        with open(os.path.join(OUTPUT_DIR, "sim_results_tp2.csv"), "r") as f:
             reader = csv.DictReader(f)
             results_tp2 = list(reader)
         
