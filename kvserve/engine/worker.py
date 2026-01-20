@@ -423,6 +423,25 @@ class Worker:
             vllm_init_method = f'tcp://localhost:{29600 + worker_unique_id}'
             log_info(f"[Worker-{self.worker_id}] Single-worker init: {vllm_init_method}")
         
+        # Initialize global NCCL group for real KV transfer when TP=1.
+        # vLLM defaults to world_size=1 for TP=1, which is too small for
+        # prefill+decode P2P transfer. Pre-init a larger group if needed.
+        if (self.nccl_world_size is not None
+                and self.nccl_world_size > self.tensor_parallel_size
+                and self.global_rank is not None
+                and self.nccl_init_method is not None
+                and not torch.distributed.is_initialized()):
+            log_info(
+                f"[Worker-{self.worker_id}] Pre-initializing NCCL group for P2P: "
+                f"rank={self.global_rank}, world={self.nccl_world_size}, init={self.nccl_init_method}"
+            )
+            torch.distributed.init_process_group(
+                backend="nccl",
+                init_method=self.nccl_init_method,
+                rank=self.global_rank,
+                world_size=self.nccl_world_size,
+            )
+
         # Initialize vLLM's distributed environment
         # For TP>1: Each worker has a rank within the TP group
         log_info(f"[Worker-{self.worker_id}] Calling init_worker_distributed_environment...")
@@ -1242,7 +1261,22 @@ class Worker:
             compressed_size = compressed_data.compressed_size
             
             # Prepare metadata for transfer
-            metadata_tensor, metadata_size_tensor = EasyDist.pack_object(compressed_data.metadata)
+            if compressed_data.is_chunked:
+                # Include chunk sizes + chunk metadata for receiver reconstruction
+                chunk_sizes = [
+                    chunk.numel() * chunk.element_size()
+                    for chunk in (compressed_data.chunks or [])
+                ]
+                metadata = {
+                    **compressed_data.metadata,
+                    "compressed_size": compressed_size,
+                    "chunk_sizes": chunk_sizes,
+                    "chunk_metadata": compressed_data.chunk_metadata or [],
+                }
+            else:
+                metadata = compressed_data.metadata
+
+            metadata_tensor, metadata_size_tensor = EasyDist.pack_object(metadata)
             metadata_size = metadata_size_tensor.item()
             
             # Send metadata size first (int64)
@@ -1254,13 +1288,21 @@ class Worker:
             del metadata_tensor # Release immediately
             
             # Send compressed data
-            c_tensor = compressed_data.compressed_tensor
-            if c_tensor.device != self.device:
-                c_tensor = c_tensor.to(self.device)
-            torch.distributed.send(c_tensor, dst=dst_rank)
-            
-            # Release compressed data immediately after send
-            del c_tensor
+            if compressed_data.is_chunked:
+                for chunk in compressed_data.chunks or []:
+                    c_tensor = chunk
+                    if c_tensor.device != self.device:
+                        c_tensor = c_tensor.to(self.device)
+                    torch.distributed.send(c_tensor, dst=dst_rank)
+                    del c_tensor
+            else:
+                c_tensor = compressed_data.compressed_tensor
+                if c_tensor is None:
+                    raise RuntimeError("compressed_tensor is None for non-chunked data")
+                if c_tensor.device != self.device:
+                    c_tensor = c_tensor.to(self.device)
+                torch.distributed.send(c_tensor, dst=dst_rank)
+                del c_tensor
             del compressed_data
             gc.collect()
             torch.cuda.empty_cache()
@@ -1330,24 +1372,46 @@ class Worker:
                 error_msg = "compressed_size not in metadata"
                 log_error(f"[Worker-{self.worker_id}] {error_msg}")
                 return {"error": error_msg, "bytes": 0, "blocks": 0}
-            
-            # Receive compressed data
-            compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
-            torch.distributed.recv(compressed_tensor, src=src_rank)
-            
-            # Reconstruct CompressedKVData
-            num_layers = metadata.get("num_layers", len(self.kv_cache))
-            compressed_data = CompressedKVData(
-                request_id=metadata.get("request_id", "unknown"),
-                layer_id=num_layers - 1,  # layer_end_id
-                compressed_tensor=compressed_tensor,
-                metadata=metadata,
-                original_size=metadata.get("original_size", 0),
-                compressed_size=compressed_size,
-            )
-            
-            # Release local reference to tensor (it is held by compressed_data)
-            del compressed_tensor
+
+            # Receive compressed data (chunked or single)
+            if metadata.get("is_chunked"):
+                chunk_sizes = metadata.get("chunk_sizes", [])
+                chunk_metadata = metadata.get("chunk_metadata", [])
+                chunks = []
+                for size in chunk_sizes:
+                    chunk_tensor = torch.empty(size, dtype=torch.uint8, device=self.device)
+                    torch.distributed.recv(chunk_tensor, src=src_rank)
+                    chunks.append(chunk_tensor)
+
+                num_layers = metadata.get("num_layers", len(self.kv_cache))
+                compressed_data = CompressedKVData(
+                    request_id=metadata.get("request_id", "unknown"),
+                    layer_id=num_layers - 1,
+                    compressed_tensor=None,
+                    metadata=metadata,
+                    original_size=metadata.get("original_size", 0),
+                    compressed_size=compressed_size,
+                    is_chunked=True,
+                    chunks=chunks,
+                    chunk_metadata=chunk_metadata,
+                )
+            else:
+                compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
+                torch.distributed.recv(compressed_tensor, src=src_rank)
+
+                # Reconstruct CompressedKVData
+                num_layers = metadata.get("num_layers", len(self.kv_cache))
+                compressed_data = CompressedKVData(
+                    request_id=metadata.get("request_id", "unknown"),
+                    layer_id=num_layers - 1,  # layer_end_id
+                    compressed_tensor=compressed_tensor,
+                    metadata=metadata,
+                    original_size=metadata.get("original_size", 0),
+                    compressed_size=compressed_size,
+                )
+                
+                # Release local reference to tensor (it is held by compressed_data)
+                del compressed_tensor
             
             # TODO: Update compression config for every request
             config = CompressionConfig(
@@ -1364,9 +1428,7 @@ class Worker:
                 compressed_data=compressed_data,
                 config=config,
             )
-            
-            # Release compressed_data immediately after decompression
-            del compressed_data
+            chunk_metadata = compressed_data.chunk_metadata or []
             
             if kv_data is None:
                 error_msg = "Decompression failed"
@@ -1374,7 +1436,18 @@ class Worker:
                 return {"error": error_msg, "bytes": 0, "blocks": 0}
             
             # Write to KV cache
-            self.write_kv_blocks(block_indices, kv_data)
+            if isinstance(kv_data, list):
+                # Chunked decompression: write each chunk with proper layer offset
+                for idx, chunk in enumerate(kv_data):
+                    start_layer = 0
+                    if idx < len(chunk_metadata):
+                        start_layer = chunk_metadata[idx].get("start_layer_id", 0)
+                    self.write_kv_blocks(block_indices, chunk, layer_offset=start_layer)
+            else:
+                self.write_kv_blocks(block_indices, kv_data)
+            
+            # Release compressed_data after use (metadata already copied)
+            del compressed_data
             
             # Release kv_data after writing to cache
             del kv_data

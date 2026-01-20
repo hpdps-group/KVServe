@@ -22,7 +22,7 @@ from kvserve.engine.backend import PDBackend
 from kvserve.eval.runner import run_evaluation
 
 # Model path (update this if needed)
-MODEL_PATH = "/root/workspace/models/Llama-3.1-8B-Instruct"
+MODEL_PATH = "/root/ssd/Llama3.1-8B-Instruct"
 
 # Compression configuration (based on test_kvserve_manager.py)
 COMPRESSION_CONFIG = {
@@ -90,11 +90,11 @@ async def run_eval_with_compression():
         num_decoding_workers=1,
         block_size=16,
         dtype="bfloat16",
-        gpu_memory_utilization=0.75, 
+        gpu_memory_utilization=0.70, 
         kv_transfer_method="nccl",
         nccl_init_method="tcp://localhost:29500",
         log_level="WARNING",
-        max_model_len=32768,
+        max_model_len=5000,
         max_batch_size=1,
         compression_config=COMPRESSION_CONFIG,
     )

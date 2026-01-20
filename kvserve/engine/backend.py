@@ -78,15 +78,23 @@ class PDBackend:
         self._request_outputs: Dict[str, List[StepOutput]] = {}
         
         # KV transfer manager
-        transfer_method = TransferMethod.NCCL if kv_transfer_method == "nccl" else TransferMethod.P2P_COPY
+        if kv_transfer_method == "simulation":
+            transfer_method = TransferMethod.SIMULATION
+        elif kv_transfer_method == "nccl":
+            transfer_method = TransferMethod.NCCL
+        else:
+            transfer_method = TransferMethod.P2P_COPY
         self.kv_transfer_manager = KVTransferManager(transfer_method=transfer_method)
         
         # NCCL configuration for P2P group
-        # For TP>1: world_size = (prefill + decode) * tensor_parallel_size
-        # For TP=1: world_size = prefill + decode
+        # For real transfer (nccl/p2p_copy): world_size = (prefill + decode) * TP
+        # For simulation: match TP group only (no cross-process P2P)
         self.nccl_init_method = nccl_init_method
-        tp_multiplier = tensor_parallel_size if tensor_parallel_size > 1 else 1
-        self.nccl_world_size = (num_prefill_workers + num_decoding_workers) * tp_multiplier
+        if transfer_method == TransferMethod.SIMULATION:
+            self.nccl_world_size = tensor_parallel_size
+        else:
+            tp_multiplier = tensor_parallel_size if tensor_parallel_size > 1 else 1
+            self.nccl_world_size = (num_prefill_workers + num_decoding_workers) * tp_multiplier
         
         # Engine configuration
         self.max_model_len = max_model_len
