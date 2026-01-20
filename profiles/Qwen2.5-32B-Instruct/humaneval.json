@@ -1,0 +1,553 @@
+[
+    {
+        "config_id": 0,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 98.64,
+        "compression_ratio": 8.6643
+    },
+    {
+        "config_id": 1,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.6,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 99.32,
+        "compression_ratio": 7.7885
+    },
+    {
+        "config_id": 2,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.7,
+            "high_key_max_value": 6,
+            "high_value_max_value": 8,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 101.36,
+        "compression_ratio": 7.654
+    },
+    {
+        "config_id": 3,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 95.25,
+        "compression_ratio": 9.6019
+    },
+    {
+        "config_id": 4,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.5,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 96.61,
+        "compression_ratio": 9.3903
+    },
+    {
+        "config_id": 5,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.4,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 97.96,
+        "compression_ratio": 9.245
+    },
+    {
+        "config_id": 6,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.7,
+            "high_key_max_value": 5,
+            "high_value_max_value": 8,
+            "low_key_max_value": 4,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 98.64,
+        "compression_ratio": 8.7341
+    },
+    {
+        "config_id": 7,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 10,
+            "high_value_max_value": 10,
+            "low_key_max_value": 3,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 100.68,
+        "compression_ratio": 8.06
+    },
+    {
+        "config_id": 8,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.2,
+            "high_key_max_value": 8,
+            "high_value_max_value": 5,
+            "low_key_max_value": 8,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 101.36,
+        "compression_ratio": 7.3068
+    },
+    {
+        "config_id": 9,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.9,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 98.64,
+        "compression_ratio": 6.9444
+    },
+    {
+        "config_id": 10,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.6,
+            "high_key_max_value": 6,
+            "high_value_max_value": 6,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 99.32,
+        "compression_ratio": 6.2973
+    },
+    {
+        "config_id": 11,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.7,
+            "high_key_max_value": 6,
+            "high_value_max_value": 8,
+            "low_key_max_value": 4,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 101.36,
+        "compression_ratio": 6.4325
+    },
+    {
+        "config_id": 12,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 95.25,
+        "compression_ratio": 7.0499
+    },
+    {
+        "config_id": 13,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.5,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 96.61,
+        "compression_ratio": 7.2675
+    },
+    {
+        "config_id": 14,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.4,
+            "high_key_max_value": 5,
+            "high_value_max_value": 5,
+            "low_key_max_value": 3,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 97.96,
+        "compression_ratio": 7.2477
+    },
+    {
+        "config_id": 15,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.7,
+            "high_key_max_value": 5,
+            "high_value_max_value": 8,
+            "low_key_max_value": 4,
+            "low_value_max_value": 3,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 98.64,
+        "compression_ratio": 7.1402
+    },
+    {
+        "config_id": 16,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.8,
+            "high_key_max_value": 10,
+            "high_value_max_value": 10,
+            "low_key_max_value": 3,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 100.68,
+        "compression_ratio": 6.3972
+    },
+    {
+        "config_id": 17,
+        "transformer_config": {
+            "transform_type": "hadamard",
+            "seed": "0x3333"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.2,
+            "high_key_max_value": 8,
+            "high_value_max_value": 5,
+            "low_key_max_value": 8,
+            "low_value_max_value": 4,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "head"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 101.36,
+        "compression_ratio": 6.2095
+    },
+    {
+        "config_id": 18,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 12,
+            "low_value_max_value": 12,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 100.0,
+        "compression_ratio": 4.57
+    },
+    {
+        "config_id": 19,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 32,
+            "high_value_max_value": 32,
+            "low_key_max_value": 16,
+            "low_value_max_value": 16,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "ANS",
+            "data_type": "|u1"
+        },
+        "accuracy": 98.63,
+        "compression_ratio": 4.02
+    },
+    {
+        "config_id": 20,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 16,
+            "high_value_max_value": 16,
+            "low_key_max_value": 12,
+            "low_value_max_value": 12,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 100.0,
+        "compression_ratio": 3.9573
+    },
+    {
+        "config_id": 21,
+        "transformer_config": {
+            "transform_type": "none"
+        },
+        "quantizer_config": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "hybrid_ratio": 0.3,
+            "high_key_max_value": 32,
+            "high_value_max_value": 32,
+            "low_key_max_value": 16,
+            "low_value_max_value": 16,
+            "axis_key": "channel",
+            "axis_value": "token",
+            "split_type": "layer"
+        },
+        "codec_config": {
+            "codec_type": "nvcomp",
+            "nvcomp_algorithm": "Bitcomp",
+            "data_type": "|b1",
+            "algorithm_type": 0
+        },
+        "accuracy": 98.63,
+        "compression_ratio": 3.6289
+    }    
+]
