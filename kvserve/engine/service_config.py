@@ -14,7 +14,7 @@ class ServiceConfig:
     These parameters are used by OnlineController to make runtime decisions.
     They can be updated during service lifetime to simulate changing conditions.
     """
-    bandwidth_mbps: float = 100.0  # Network bandwidth in MB/s
+    bandwidth_gbps: float = 0.1  # Network bandwidth in Gbps (bits/s)
     slo_ms: float = 5000.0  # Service Level Objective in milliseconds
     accuracy_requirement: float = 0.90  # Minimum accuracy requirement (0-1)
     model_name: Optional[str] = None  # Model name (e.g., "Llama-3.1-8B-Instruct")
@@ -23,7 +23,7 @@ class ServiceConfig:
     def to_dict(self):
         """Convert to dictionary"""
         return {
-            'bandwidth_mbps': self.bandwidth_mbps,
+            'bandwidth_gbps': self.bandwidth_gbps,
             'slo_ms': self.slo_ms,
             'accuracy_requirement': self.accuracy_requirement,
             'model_name': self.model_name,

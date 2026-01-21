@@ -26,7 +26,7 @@ class HadamardTransform:
         Args:
             base_seed: Base seed for generating Rademacher signs (default: 0xC0FEBABE)
         """
-        self.base_seed = base_seed
+        self.base_seed = int(base_seed, 0) if isinstance(base_seed, str) else int(base_seed)
         # Cache signs tensors to avoid repeated CPU generation and Host-to-Device transfer
         self.signs_cache = {}
 

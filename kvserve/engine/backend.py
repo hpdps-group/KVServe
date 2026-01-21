@@ -93,8 +93,8 @@ class PDBackend:
         if transfer_method == TransferMethod.SIMULATION:
             self.nccl_world_size = tensor_parallel_size
         else:
-            tp_multiplier = tensor_parallel_size if tensor_parallel_size > 1 else 1
-            self.nccl_world_size = (num_prefill_workers + num_decoding_workers) * tp_multiplier
+        tp_multiplier = tensor_parallel_size if tensor_parallel_size > 1 else 1
+        self.nccl_world_size = (num_prefill_workers + num_decoding_workers) * tp_multiplier
         
         # Engine configuration
         self.max_model_len = max_model_len

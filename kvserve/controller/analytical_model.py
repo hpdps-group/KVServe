@@ -55,8 +55,8 @@ class AnalyticalModel:
         # T_codec = T_compress + T_decompress = V/S
         T_codec_ms = (V_mb / S_mbps) * 1000
         
-        # T_transfer = (compressed_volume) / B = (V*cr) / B
-        T_transfer_ms = (V_mb * cr / B_mbps) * 1000
+        # T_transfer = (compressed_volume) / B = V / (B * cr)
+        T_transfer_ms = (V_mb / (B_mbps * cr)) * 1000
         
         # Total latency
         T_hat = T_model_ms + T_codec_ms + T_transfer_ms

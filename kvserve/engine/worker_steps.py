@@ -28,6 +28,9 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
                 
                 # Get prompt token ids
                 prompt_token_ids = list(request.prompt_token_ids) if request.prompt_token_ids else []
+                # Track input length for controller (used in compression selection)
+                if hasattr(worker, "_request_input_lengths"):
+                    worker._request_input_lengths[request.request_id] = len(prompt_token_ids)
                 
                 # Create SequenceData using from_seqs (vLLM 0.10.1 API)
                 seq_data = SequenceData.from_seqs(

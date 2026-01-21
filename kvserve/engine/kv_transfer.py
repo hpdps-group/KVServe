@@ -340,8 +340,11 @@ class KVTransferManager:
                 )
                 
                 # Update manifest with decompression time
-                self.simulation_manifest[request_id]['decompression_time_ms'] = result['decompression_time_ms']
-                self.simulation_manifest[request_id]['write_time_ms'] = result['write_time_ms']
+                if "error" in result:
+                    log_error(f"[KVTransfer-SIM] Decompression failed for {request_id}: {result['error']}")
+                    return False
+                self.simulation_manifest[request_id]['decompression_time_ms'] = result.get('decompression_time_ms', 0.0)
+                self.simulation_manifest[request_id]['write_time_ms'] = result.get('write_time_ms', 0.0)
                 
                 log_debug(f"[KVTransfer-SIM] Loaded KV for {request_id}: "
                          f"decompress={result['decompression_time_ms']:.2f}ms, "

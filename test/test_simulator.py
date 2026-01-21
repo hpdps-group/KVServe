@@ -51,6 +51,7 @@ os.environ['VLLM_USE_CUSTOM_ALLREDUCE'] = '0'
 from kvserve.simulator import SimulatorBackend
 from kvserve.engine.service_config import ServiceConfig
 from kvserve.controller import OnlineController
+from kvserve.controller.dynamic_online_controller import DynamicOnlineController
 
 # ============================================================================
 # ENGINE CONFIGURATION - CHANGE HERE TO ADJUST SIMULATOR SETTINGS
@@ -67,7 +68,8 @@ PREFILL_MAX_BATCH_SIZE = 4
 # Decode engine settings
 DECODE_GPU_MEMORY_UTILIZATION = 0.75
 DECODE_MAX_MODEL_LEN = 10000
-DECODE_MAX_BATCH_SIZE = 10
+DECODE_MAX_BATCH_SIZE = 4
+DECODE_MAX_OUTPUT_LEN = 512
 
 # Common settings
 DTYPE = "float16"
@@ -129,11 +131,19 @@ CUSTOM_COMPRESSION_CONFIG = {
 # -------- CONTROLLER MODE CONFIG --------
 CONTROLLER_PROFILE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "profiles/llama3.1-8b_example.json"
+    "/root/lzd/kvserve_project/profiles/Llama-3.1-8B-Instruct/qasper.json"
 )
+CONTROLLER_PREFILL_MACHINE = "5090"
+CONTROLLER_DECODE_MACHINE = "5090"
+CONTROLLER_DATASET = "qasper"
+
+
+# ============================================================================
+# SERVICE CONFIGURATION - CHANGE HERE TO SWITCH SERVICES
+# ============================================================================
 
 SERVICE_CONFIG = ServiceConfig(
-    bandwidth_mbps=150.0,  # Network bandwidth in MB/s
+    bandwidth_gbps=10,  # Network bandwidth in Gbps (bits/s)
     slo_ms=5000.0,  # Service Level Objective in milliseconds
     accuracy_requirement=0.92,  # Minimum accuracy requirement
     model_name="Llama-3.1-8B-Instruct",
@@ -336,7 +346,7 @@ async def worker_prefill(
     return results
 
 
-async def worker_decode(tp: int, intermediate_file: str, final_file: str, compression_config=None, service_config=None, kv_dir: str = None):
+async def worker_decode(tp: int, intermediate_file: str, final_file: str, compression_config=None, service_config=None, kv_dir: str = None, max_output_len: int = None):
     """Worker: run decode stage"""
     sim = SimulatorBackend(
         model_path=MODEL_PATH,
@@ -362,6 +372,7 @@ async def worker_decode(tp: int, intermediate_file: str, final_file: str, compre
     results = await sim.run_decode_only(
         input_file=intermediate_file,
         output_file=final_file,
+        max_output_len=max_output_len,
     )
     
     # Print stats
@@ -416,7 +427,19 @@ def run_stage_in_subprocess(stage: str, tp: int, gpus: str, compression_mode: st
     python_exec = sys.executable
     
     env = os.environ.copy()
-    env['CUDA_VISIBLE_DEVICES'] = gpus
+    # Respect parent CUDA_VISIBLE_DEVICES mapping if present
+    def _map_visible_gpus(parent_visible: str, requested: str) -> str:
+        parent_list = [p.strip() for p in parent_visible.split(',') if p.strip()]
+        req_list = [r.strip() for r in requested.split(',') if r.strip()]
+        if parent_list and req_list and all(r.isdigit() for r in req_list):
+            idxs = [int(r) for r in req_list]
+            if all(i < len(parent_list) for i in idxs):
+                return ",".join(parent_list[i] for i in idxs)
+        return requested
+
+    parent_visible = env.get('CUDA_VISIBLE_DEVICES')
+    mapped_gpus = _map_visible_gpus(parent_visible, gpus) if parent_visible else gpus
+    env['CUDA_VISIBLE_DEVICES'] = mapped_gpus
     env['VLLM_USE_V1'] = '0'
     env['VLLM_USE_CUSTOM_ALLREDUCE'] = '0'
     # Force vLLM worker pool to use spawn to avoid CUDA re-init issues in forked procs
@@ -430,7 +453,7 @@ def run_stage_in_subprocess(stage: str, tp: int, gpus: str, compression_mode: st
     if kv_dir:
         cmd.extend(['--kv-dir', kv_dir])
     
-    print(f"\n[Subprocess] Launching {stage.upper()} (TP={tp}) on GPU(s) {gpus}")
+    print(f"\n[Subprocess] Launching {stage.upper()} (TP={tp}) on GPU(s) {mapped_gpus}")
     print(f"[Subprocess] Compression mode: {compression_mode}")
     if kv_dir:
         print(f"[Subprocess] KV directory: {kv_dir}")
@@ -466,8 +489,11 @@ async def main():
             compression_config = "default"  # Worker will use default config
         elif compression_mode == "controller":
             # Create controller for this worker
-            compression_config = OnlineController(
-                library_path=CONTROLLER_PROFILE_PATH,
+            compression_config = DynamicOnlineController(
+                model_name=SERVICE_CONFIG.model_name,
+                dataset=CONTROLLER_DATASET,
+                prefill_machine=CONTROLLER_PREFILL_MACHINE,
+                decode_machine=CONTROLLER_DECODE_MACHINE,
                 epsilon=0.1
             )
             service_config = SERVICE_CONFIG
@@ -502,7 +528,15 @@ async def main():
             print(f"\n[Worker] Running Decode (TP={tp}), input={intermediate_file}, output={final_file}")
             print(f"[Worker] Compression mode: {compression_mode}")
             print(f"[Worker] KV directory: {kv_dir or KV_STORAGE_DIR}")
-            await worker_decode(tp, intermediate_file, final_file, compression_config=compression_config, service_config=service_config, kv_dir=kv_dir)
+            await worker_decode(
+                tp,
+                intermediate_file,
+                final_file,
+                compression_config=compression_config,
+                service_config=service_config,
+                kv_dir=kv_dir,
+                max_output_len=DECODE_MAX_OUTPUT_LEN,
+            )
         return
     
     # Main process: parse arguments with argparse
@@ -539,17 +573,22 @@ async def main():
         print(f"{'='*60}")
         print("Using system default compression config")
     elif compression_mode == "controller":
-        compression_config = OnlineController(
-            library_path=CONTROLLER_PROFILE_PATH,
+        compression_config = DynamicOnlineController(
+            model_name=SERVICE_CONFIG.model_name,
+            dataset=CONTROLLER_DATASET,
+            prefill_machine=CONTROLLER_PREFILL_MACHINE,
+            decode_machine=CONTROLLER_DECODE_MACHINE,
             epsilon=0.1
         )
         service_config = SERVICE_CONFIG
         print(f"\n{'='*60}")
         print("COMPRESSION: Controller Mode (Dynamic)")
         print(f"{'='*60}")
-        print(f"Profile library: {CONTROLLER_PROFILE_PATH}")
+        print(f"Prefill machine: {CONTROLLER_PREFILL_MACHINE}")
+        print(f"Decode machine: {CONTROLLER_DECODE_MACHINE}")
+        print(f"Dataset: {CONTROLLER_DATASET}")
         print(f"Service config:")
-        print(f"  Bandwidth: {SERVICE_CONFIG.bandwidth_mbps} MB/s")
+        print(f"  Bandwidth: {SERVICE_CONFIG.bandwidth_gbps} GB/s")
         print(f"  SLO: {SERVICE_CONFIG.slo_ms} ms")
         print(f"  Accuracy: {SERVICE_CONFIG.accuracy_requirement}")
     else:

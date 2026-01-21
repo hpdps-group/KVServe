@@ -155,7 +155,7 @@ class SimulatorBackend:
         Update service configuration for all engines
         
         Args:
-            **kwargs: Service config parameters to update (bandwidth_mbps, slo_ms, etc.)
+            **kwargs: Service config parameters to update (bandwidth_gbps, slo_ms, etc.)
         """
         if self.service_config:
             self.service_config.update(**kwargs)
@@ -433,6 +433,7 @@ class SimulatorBackend:
         self,
         input_file: str = "prefill_results.pkl",
         output_file: str = "decode_results.pkl",
+        max_output_len: int = None,
     ):
         """
         Run ONLY Decode stage using kvserve engine, load prefill results from file.
@@ -452,6 +453,8 @@ class SimulatorBackend:
         events: Dict[str, RequestEvent] = data['events']
         prompts = data['prompts']
         max_tokens = data['max_tokens']
+        if max_output_len is not None:
+            max_tokens = max_output_len
         temperature = data['temperature']
         manifest_file = data['manifest_file']
         
