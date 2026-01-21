@@ -6,6 +6,7 @@ Simplified version that works with DynamicProfileLibrary.
 
 import random
 import time
+from pathlib import Path
 from typing import Dict, Optional, Tuple, Any
 
 from kvserve.controller.profile import Profile
@@ -31,8 +32,8 @@ class DynamicOnlineController:
         dataset: str,
         prefill_machine: str,
         decode_machine: Optional[str] = None,
-        profiles_dir: str = "/root/lzd/kvserve_project/profiles",
-        speed_results_dir: str = "/root/lzd/kvserve_project/speed_results",
+        profiles_dir: Optional[str] = None,
+        speed_results_dir: Optional[str] = None,
         epsilon: float = 0.0,  # 0.0 = pure exploitation (no exploration)
         max_candidates: int = 3
     ):
@@ -48,6 +49,9 @@ class DynamicOnlineController:
             epsilon: ε-greedy exploration rate (0 = pure exploitation)
             max_candidates: Maximum number of candidates to consider
         """
+        base_dir = Path(__file__).resolve().parents[2]
+        profiles_dir = profiles_dir or str(base_dir / "profiles")
+        speed_results_dir = speed_results_dir or str(base_dir / "speed_results")
         self.library = DynamicProfileLibrary(
             model_name=model_name,
             dataset=dataset,

@@ -42,7 +42,8 @@ import pickle
 from typing import Optional
 
 # Add project root to Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, PROJECT_ROOT)
 
 # Set environment for vLLM
 os.environ['VLLM_USE_V1'] = '0'
@@ -68,14 +69,14 @@ PREFILL_MAX_BATCH_SIZE = 4
 # Decode engine settings
 DECODE_GPU_MEMORY_UTILIZATION = 0.75
 DECODE_MAX_MODEL_LEN = 10000
-DECODE_MAX_BATCH_SIZE = 4
+DECODE_MAX_BATCH_SIZE = 10
 DECODE_MAX_OUTPUT_LEN = 512
 
 # Common settings
 DTYPE = "float16"
 
 # Network simulation parameters (for KV transfer timing)
-NETWORK_GBPS = 10.0
+NETWORK_GBPS = 50.0
 MAX_CONCURRENT_TRANSFERS_PREFILL = 2
 MAX_CONCURRENT_TRANSFERS_DECODE = 4
 NETWORK_EFFICIENCY = 0.8
@@ -98,12 +99,13 @@ OUTPUT_DIR = "./sim_outputs"
 PREFILL_RESULTS_DIR = "./sim_timestamps"
 DECODE_RESULTS_DIR = "./sim_timestamps"
 
+
 # ============================================================================
 # COMPRESSION CONFIGURATION - CHANGE HERE TO SWITCH MODES
 # ============================================================================
 
 # Select compression mode: "none", "custom", "default", or "controller"
-COMPRESSION_MODE = "default"  # <-- CHANGE THIS TO SWITCH MODES
+COMPRESSION_MODE = "controller"  # <-- CHANGE THIS TO SWITCH MODES
 
 # -------- CUSTOM MODE CONFIG --------
 CUSTOM_COMPRESSION_CONFIG = {
@@ -143,7 +145,7 @@ CONTROLLER_DATASET = "qasper"
 # ============================================================================
 
 SERVICE_CONFIG = ServiceConfig(
-    bandwidth_gbps=10,  # Network bandwidth in Gbps (bits/s)
+    bandwidth_gbps=NETWORK_GBPS,  # Network bandwidth in Gbps (bits/s)
     slo_ms=5000.0,  # Service Level Objective in milliseconds
     accuracy_requirement=0.92,  # Minimum accuracy requirement
     model_name="Llama-3.1-8B-Instruct",
@@ -421,7 +423,14 @@ def save_results_to_csv(results_file: str, csv_path: str, tp: int):
     print(f"✓ Saved results to {csv_path}")
 
 
-def run_stage_in_subprocess(stage: str, tp: int, gpus: str, compression_mode: str, kv_dir: str = None, *args) -> int:
+def run_stage_in_subprocess(
+    stage: str,
+    tp: int,
+    gpus: str,
+    compression_mode: str,
+    kv_dir: str = None,
+    *args
+) -> int:
     """Run a stage (prefill or decode) in a separate subprocess"""
     script_path = os.path.abspath(__file__)
     python_exec = sys.executable

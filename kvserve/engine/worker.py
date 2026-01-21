@@ -298,13 +298,13 @@ class Worker:
                     acc_req=accuracy_requirement
                 )
         except Exception:
-            profile, context = self.online_controller.select_profile(
-                V_bytes=kv_volume_bytes,
-                B_mbps=bandwidth_mbps,
-                T_model_ms=model_latency_ms,
-                T_SLO_ms=slo_ms,
-                acc_req=accuracy_requirement
-            )
+        profile, context = self.online_controller.select_profile(
+            V_bytes=kv_volume_bytes,
+            B_mbps=bandwidth_mbps,
+            T_model_ms=model_latency_ms,
+            T_SLO_ms=slo_ms,
+            acc_req=accuracy_requirement
+        )
         
         # Store context for later update
         self._last_controller_context = context
@@ -467,7 +467,7 @@ class Worker:
                 rank=self.global_rank,
                 world_size=self.nccl_world_size,
             )
-
+        
         # Initialize vLLM's distributed environment
         # For TP>1: Each worker has a rank within the TP group
         log_info(f"[Worker-{self.worker_id}] Calling init_worker_distributed_environment...")
@@ -1046,40 +1046,40 @@ class Worker:
                         self._init_compression_manager()
                 if self.compression_manager is None:
                     return {"error": "Compression manager not initialized", "decompression_time_ms": 0.0, "write_time_ms": 0.0}
-                # Ensure compressed tensor on GPU for decompression (handle both chunked and non-chunked)
-                if compressed_data.is_chunked:
-                    # Move all chunks to GPU
-                    if compressed_data.chunks:
+            # Ensure compressed tensor on GPU for decompression (handle both chunked and non-chunked)
+            if compressed_data.is_chunked:
+                # Move all chunks to GPU
+                if compressed_data.chunks:
                         for idx, chunk in enumerate(compressed_data.chunks):
-                            if chunk is not None and chunk.device.type == 'cpu':
+                        if chunk is not None and chunk.device.type == 'cpu':
                                 compressed_data.chunks[idx] = chunk.to(self.device, non_blocking=True)
-                else:
-                    if compressed_data.compressed_tensor is not None and compressed_data.compressed_tensor.device.type == 'cpu':
-                        compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
-                
-                # Create compression config (following remote API)
-                config = CompressionConfig(
-                    enabled=self.compression_config.get("enabled", True),
-                    transformer_config=self.compression_config.get("transformer_config"),
-                    quantizer_config=self.compression_config.get("quantizer_config"),
-                    codec_config=self.compression_config.get("codec_config"),
-                    pipeline=self.compression_config.get("pipeline", []),
-                    min_compress_size=self.compression_config.get("min_compress_size", 0),
-                )
-                kv_data = self.compression_manager.decompress_all_layers(compressed_data, config)
-                decompression_time_ms = (time.time() - t_decompress_start) * 1000.0
             else:
-                # Already decompressed - move to GPU if needed
-                kv_data = compressed_data
-                if kv_data.device.type == 'cpu':
-                    kv_data = kv_data.to(self.device, non_blocking=True)
-                decompression_time_ms = 0.0
+                if compressed_data.compressed_tensor is not None and compressed_data.compressed_tensor.device.type == 'cpu':
+                    compressed_data.compressed_tensor = compressed_data.compressed_tensor.to(self.device, non_blocking=True)
+            
+            # Create compression config (following remote API)
+            config = CompressionConfig(
+                enabled=self.compression_config.get("enabled", True),
+                transformer_config=self.compression_config.get("transformer_config"),
+                quantizer_config=self.compression_config.get("quantizer_config"),
+                codec_config=self.compression_config.get("codec_config"),
+                pipeline=self.compression_config.get("pipeline", []),
+                min_compress_size=self.compression_config.get("min_compress_size", 0),
+            )
+            kv_data = self.compression_manager.decompress_all_layers(compressed_data, config)
+            decompression_time_ms = (time.time() - t_decompress_start) * 1000.0
+        else:
+            # Already decompressed - move to GPU if needed
+            kv_data = compressed_data
+            if kv_data.device.type == 'cpu':
+                kv_data = kv_data.to(self.device, non_blocking=True)
+            decompression_time_ms = 0.0
         except Exception as e:
             return {"error": f"Decompression failed: {type(e).__name__}: {e}", "decompression_time_ms": 0.0, "write_time_ms": 0.0}
         
         if kv_data is None:
             return {"error": "Decompression produced no data", "decompression_time_ms": decompression_time_ms, "write_time_ms": 0.0}
-
+        
         # Write to KV cache (handle both single tensor and chunked list)
         t_write_start = time.time()
         
@@ -1362,13 +1362,13 @@ class Worker:
                     torch.distributed.send(c_tensor, dst=dst_rank)
                     del c_tensor
             else:
-                c_tensor = compressed_data.compressed_tensor
+            c_tensor = compressed_data.compressed_tensor
                 if c_tensor is None:
                     raise RuntimeError("compressed_tensor is None for non-chunked data")
-                if c_tensor.device != self.device:
-                    c_tensor = c_tensor.to(self.device)
-                torch.distributed.send(c_tensor, dst=dst_rank)
-                del c_tensor
+            if c_tensor.device != self.device:
+                c_tensor = c_tensor.to(self.device)
+            torch.distributed.send(c_tensor, dst=dst_rank)
+            del c_tensor
             del compressed_data
             gc.collect()
             torch.cuda.empty_cache()
@@ -1438,7 +1438,7 @@ class Worker:
                 error_msg = "compressed_size not in metadata"
                 log_error(f"[Worker-{self.worker_id}] {error_msg}")
                 return {"error": error_msg, "bytes": 0, "blocks": 0}
-
+            
             # Receive compressed data (chunked or single)
             if metadata.get("is_chunked"):
                 chunk_sizes = metadata.get("chunk_sizes", [])
@@ -1462,22 +1462,22 @@ class Worker:
                     chunk_metadata=chunk_metadata,
                 )
             else:
-                compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
-                torch.distributed.recv(compressed_tensor, src=src_rank)
-
-                # Reconstruct CompressedKVData
-                num_layers = metadata.get("num_layers", len(self.kv_cache))
-                compressed_data = CompressedKVData(
-                    request_id=metadata.get("request_id", "unknown"),
-                    layer_id=num_layers - 1,  # layer_end_id
-                    compressed_tensor=compressed_tensor,
-                    metadata=metadata,
-                    original_size=metadata.get("original_size", 0),
-                    compressed_size=compressed_size,
-                )
-                
-                # Release local reference to tensor (it is held by compressed_data)
-                del compressed_tensor
+            compressed_tensor = torch.empty(compressed_size, dtype=torch.uint8, device=self.device)
+            torch.distributed.recv(compressed_tensor, src=src_rank)
+            
+            # Reconstruct CompressedKVData
+            num_layers = metadata.get("num_layers", len(self.kv_cache))
+            compressed_data = CompressedKVData(
+                request_id=metadata.get("request_id", "unknown"),
+                layer_id=num_layers - 1,  # layer_end_id
+                compressed_tensor=compressed_tensor,
+                metadata=metadata,
+                original_size=metadata.get("original_size", 0),
+                compressed_size=compressed_size,
+            )
+            
+            # Release local reference to tensor (it is held by compressed_data)
+            del compressed_tensor
             
             # Update compression config from metadata if provided
             metadata_config = metadata.get("compression_config") if isinstance(metadata, dict) else None
@@ -1517,7 +1517,7 @@ class Worker:
                         start_layer = chunk_metadata[idx].get("start_layer_id", 0)
                     self.write_kv_blocks(block_indices, chunk, layer_offset=start_layer)
             else:
-                self.write_kv_blocks(block_indices, kv_data)
+            self.write_kv_blocks(block_indices, kv_data)
             
             # Release compressed_data after use (metadata already copied)
             del compressed_data
