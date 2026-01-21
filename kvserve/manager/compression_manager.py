@@ -439,6 +439,7 @@ class CompressionManager:
                 compression_metadata["quantization_applied"] = True
             
             # 2. Determine target permuted shape
+            # TODO: This tensor shape should be handled by the codec, not the manager
             layer_permuted_shape = (
                 processed_data.shape[0], # 2
                 processed_data.shape[3], # heads
@@ -1025,7 +1026,7 @@ class CompressionManager:
 
 
 class EasyDist:
-    # Memory alignment size (bytes), ensures Tensor reads are address-aligned to avoid illegal memory access
+    # Memory alignment size (bytes); keeps tensor reads address-aligned to avoid illegal access
     ALIGNMENT = 256 
 
     @classmethod
@@ -1033,11 +1034,11 @@ class EasyDist:
         """
         Pack arbitrary mixed objects (Dict, List, Tensor nested structures) for transmission.
         """
-        # 1. Pack into a single Super Tensor on GPU
+        # 1. Pack into a single super tensor on GPU
         super_tensor = cls._pack_to_gpu(obj)
         
         # 2. Send total size (handshake)
-        # This step is necessary - the receiver needs to know how much memory to allocate
+        # The receiver must know how much memory to allocate
         size_tensor = torch.tensor([super_tensor.numel()], dtype=torch.int64, device=super_tensor.device)
         
         # 3. Send Super Tensor (one-shot transmission of all data)
@@ -1077,117 +1078,126 @@ class EasyDist:
 
     @classmethod
     def _pack_to_gpu(cls, obj: Any) -> torch.Tensor:
-        """Convert object into a single uint8 tensor"""
+        """Convert object into a single uint8 tensor (Fixed for Mixed Types & Alignment)"""
         tensors = []
-        # Recursively extract Tensors and generate skeleton (CPU operation, very fast)
         skeleton = cls._extract_tensors(obj, tensors)
         
-        # 1. Serialize skeleton (MsgPack)
-        # Store dtype information for restoration
+        # Record dtype for every tensor, not just the first
         if tensors:
-            skeleton['__dtype__'] = str(tensors[0].dtype).split('.')[-1]
+            skeleton['__dtypes__'] = [str(t.dtype).split('.')[-1] for t in tensors]
         
         meta_bytes = msgpack.packb(skeleton, use_bin_type=True)
         meta_np = np.frombuffer(meta_bytes, dtype=np.uint8).copy()
         
-        # 2. Prepare shape information (Shapes)
-        # Format: [N, Rank1, D1..., Rank2, D2...]
         shape_flat = [len(tensors)]
         for t in tensors:
             shape_flat.append(t.dim())
             shape_flat.extend(t.shape)
         shape_np = np.array(shape_flat, dtype=np.int64)
         
-        # 3. Calculate offsets (Offset Calculation)
-        # We need to concatenate metadata, shapes, and payloads together
-        # Layout: [Header(3 ints)] + [Meta Bytes] + [Padding] + [Shape Bytes] + [Padding] + [Payloads]
+        # Align payload to 8 bytes so each tensor starts at an 8-byte boundary,
+        # preventing invalid alignment errors when using view()
+        payload_parts = []
+        for t in tensors:
+                # Convert to byte view
+            data_bytes = t.view(torch.uint8).reshape(-1)
+            payload_parts.append(data_bytes)
+            
+            # Calculate padding bytes needed
+            rem = data_bytes.numel() % 8
+            if rem > 0:
+                # Pad with zeros
+                padding = torch.zeros(8 - rem, dtype=torch.uint8, device=t.device)
+                payload_parts.append(padding)
+        
+        if payload_parts:
+            flat_payload = torch.cat(payload_parts)
+            payload_size = flat_payload.numel()
+        else:
+            device = tensors[0].device if tensors else ('cuda' if torch.cuda.is_available() else 'cpu')
+            flat_payload = torch.tensor([], dtype=torch.uint8, device=device)
+            payload_size = 0
         
         len_meta = len(meta_np)
         len_shapes = len(shape_np) * 8 # int64 = 8 bytes
         
-        # Calculate total payload size in bytes
-        payload_size = sum(t.numel() * t.element_size() for t in tensors)
-        
         # Align offsets
-        offset_meta = 32 # Header reserves 32 bytes
+        offset_meta = 32 
         offset_shapes = cls._align(offset_meta + len_meta)
         offset_payload = cls._align(offset_shapes + len_shapes)
         total_size = offset_payload + payload_size
         
-        # 4. Allocate Super Buffer (GPU)
-        # This is the only memory allocation, very efficient
+        # Allocate Super Buffer
         device = tensors[0].device if tensors else 'cuda'
         buffer = torch.zeros(total_size, dtype=torch.uint8, device=device)
         
-        # 5. Write Header (record lengths/offsets of each region)
-        # Header: [Meta_Len, Shape_Len, Payload_Offset]
+        # Write Header
         header_data = torch.tensor([len_meta, len_shapes, offset_payload], dtype=torch.long, device=device)
-        # Write header to buffer head (int64 -> uint8 view)
         buffer[:24] = header_data.view(torch.uint8)
         
-        # 6. Write Meta and Shapes (CPU -> GPU copy)
+        # Write Meta and Shapes
         buffer[offset_meta : offset_meta + len_meta] = torch.from_numpy(meta_np).to(device)
         buffer[offset_shapes : offset_shapes + len_shapes] = torch.from_numpy(shape_np).view(torch.uint8).to(device)
         
-        # 7. Write Payloads (D2D copy, fastest)
-        if tensors:
-            # Flatten & Concat all tensor data
-            # Note: Assumes all tensors have the same dtype. If different, need to convert to view(uint8) then cat
-            flat_payload = torch.cat([t.view(torch.uint8).view(-1) for t in tensors])
-            buffer[offset_payload : offset_payload + len(flat_payload)] = flat_payload
+        # Write Payloads
+        if payload_size > 0:
+            buffer[offset_payload : offset_payload + payload_size] = flat_payload
             
         return buffer
 
     @classmethod
     def _unpack_from_gpu(cls, buffer: torch.Tensor) -> Any:
-        """Restore object from a single Tensor"""
+        """Restore object from a single Tensor (Fixed for Mixed Types & Alignment)"""
         # 1. Read Header
-        header = buffer[:24].view(torch.int64) # 3 int64 values
+        header = buffer[:24].view(torch.int64)
         len_meta = header[0].item()
         len_shapes = header[1].item()
         offset_payload = header[2].item()
         
-        # 2. Read Meta (need to transfer back to CPU for parsing)
+        # 2. Read Meta
         offset_meta = 32
         meta_bytes = buffer[offset_meta : offset_meta + len_meta].cpu().numpy().tobytes()
         skeleton = msgpack.unpackb(meta_bytes, raw=False)
         
         # 3. Restore Tensor list
         reconstructed_tensors = []
-        num_tensors = 0
         
         if len_shapes > 0:
             offset_shapes = cls._align(offset_meta + len_meta)
-            # view as int64
             shape_data = buffer[offset_shapes : offset_shapes + len_shapes].view(torch.int64).cpu().tolist()
             num_tensors = shape_data[0]
             
-            # Get dtype
-            dtype_str = skeleton.get('__dtype__', 'bfloat16')
-            if '__dtype__' in skeleton: del skeleton['__dtype__'] # Clean up helper key
-            target_dtype = getattr(torch, dtype_str)
-            element_size = torch.tensor([], dtype=target_dtype).element_size()
+            # Retrieve stored dtype list
+            dtypes = skeleton.get('__dtypes__', [])
             
             ptr_shape = 1
             ptr_payload = offset_payload
             
-            for _ in range(num_tensors):
+            for i in range(num_tensors):
                 rank = shape_data[ptr_shape]
                 dims = shape_data[ptr_shape + 1 : ptr_shape + 1 + rank]
                 ptr_shape += (1 + rank)
                 
-                # Calculate byte length
+                # Retrieve correct dtype for current tensor
+                dtype_str = dtypes[i]
+                target_dtype = getattr(torch, dtype_str)
+                # Size in bytes for this dtype (e.g., int32=4, int16=2)
+                element_size = torch.tensor([], dtype=target_dtype).element_size()
+                
+                # Compute actual byte length for the tensor
                 numel = 1
                 for d in dims: numel *= d
                 byte_size = numel * element_size
                 
-                # Zero-Copy slice + View
-                # Note: buffer is uint8, need to view as target dtype
+                # Zero-copy slice + view; payload pointer is 8-byte aligned thanks to padding
                 raw_bytes = buffer[ptr_payload : ptr_payload + byte_size]
                 tensor = raw_bytes.view(target_dtype).view(dims)
                 reconstructed_tensors.append(tensor)
                 
-                ptr_payload += byte_size
+                # Skip padding and move pointer to next 8-byte boundary
+                rem = byte_size % 8
+                padding = (8 - rem) if rem > 0 else 0
+                ptr_payload += (byte_size + padding)
 
         # 4. Recursively restore
         return cls._restore_tensors(skeleton, reconstructed_tensors)

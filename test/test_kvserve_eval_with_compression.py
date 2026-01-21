@@ -22,7 +22,7 @@ from kvserve.engine.backend import PDBackend
 from kvserve.eval.runner import run_evaluation
 
 # Model path (update this if needed)
-MODEL_PATH = "/root/ssd/Llama3.1-8B-Instruct"
+MODEL_PATH = "/root/data/models/Llama-3.1-8B-Instruct"
 
 # Compression configuration (based on test_kvserve_manager.py)
 COMPRESSION_CONFIG = {
@@ -51,6 +51,47 @@ COMPRESSION_CONFIG = {
     "min_compress_size": 1024,
 }
 
+# For KIVI's compression pipeline
+# COMPRESSION_CONFIG = {
+#     "enabled": True,
+#     "pipeline": ["quantizer", "codec"],
+#     # "transformer_config": {
+#     #     "transform_type": "hadamard",
+#     #     "seed": 0x3333,
+#     # },
+#     "quantizer_config": {
+#         "model_name": "Llama-3.1-8B-Instruct",
+#         "nbits": 2,
+#         "axis_key": "channel",
+#         "axis_value": "token",
+#         "group_size": 32,
+#     },
+#     "codec_config": {
+#         "codec_type": "bitpacking",
+#     },
+#     "min_compress_size": 1024,
+# }
+
+# For Cachegen's compression pipeline
+# COMPRESSION_CONFIG = {
+#     "enabled": True,
+#     "pipeline": ["quantizer", "codec"],
+#     # "transformer_config": {
+#     #     "transform_type": "hadamard",
+#     #     "seed": 0x3333,
+#     # },
+#     "quantizer_config": {
+#         "model_name": "Qwen2.5-32B-Instruct",
+#         "quantization_level": 2,
+#         "high_max_value": 32,
+#         "mid_max_value": 16,
+#         "low_max_value": 12,
+#     },
+#     "codec_config": {
+#         "codec_type": "torchac",
+#     },
+#     "min_compress_size": 1024,
+# }
 
 async def run_eval_with_compression():
     """Run evaluation with compression enabled"""
@@ -88,7 +129,7 @@ async def run_eval_with_compression():
         model_path=MODEL_PATH,
         num_prefill_workers=1,
         num_decoding_workers=1,
-        block_size=16,
+        block_size=32,
         dtype="bfloat16",
         gpu_memory_utilization=0.70, 
         kv_transfer_method="nccl",

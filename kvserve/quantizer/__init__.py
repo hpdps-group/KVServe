@@ -10,6 +10,8 @@ from kvserve.quantizer.split_func import (
     head_split, head_restore, head_reconstruct
 )
 from kvserve.quantizer.kvserve_quantizer import KVServeQuantizer
+from kvserve.quantizer.cachegen_quantizer import CachegenQuantizer
+from kvserve.quantizer.kivi_quantizer import KIVIQuantizer
 
 __all__ = [
     "quantize", 
@@ -21,6 +23,8 @@ __all__ = [
     "head_reconstruct",
     "layer_reconstruct",
     "KVServeQuantizer",
+    "CachegenQuantizer",
+    "KIVIQuantizer",
 ]
 
 
