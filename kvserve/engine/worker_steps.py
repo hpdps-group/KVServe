@@ -95,6 +95,9 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
             # 
             # For TP>1: Only rank 0 will produce sampling outputs
             # Non-rank-0 workers participate in forward pass but may fail at sampling
+            
+            # Track model execution time for controller
+            t_exec_start = time.time()
             try:
                 seq_outs = worker.model_runner.execute_model(model_input, [], None)
             except AssertionError as e:
@@ -105,6 +108,12 @@ def step_prefill_impl(worker, batched_requests, kv_block_tables):
                     seq_outs = []  # Return empty for non-rank-0
                 else:
                     raise  # Rank 0 should not fail
+            
+            # Update model latency for controller
+            exec_time_ms = (time.time() - t_exec_start) * 1000.0
+            if hasattr(worker, 'update_model_latency'):
+                from kvserve.engine.utils import EngineStage
+                worker.update_model_latency(exec_time_ms, EngineStage.PREFILL)
             
             # Extract generated tokens
             generated_tokens = []
@@ -294,6 +303,12 @@ def step_decode_impl(worker, batched_requests, kv_block_tables):
                 traceback.print_exc()
                 return []
             step_end_time = time.time()
+            
+            # Update model latency for controller
+            exec_time_ms = (step_end_time - step_start_time) * 1000.0
+            if hasattr(worker, 'update_model_latency'):
+                from kvserve.engine.utils import EngineStage
+                worker.update_model_latency(exec_time_ms, EngineStage.DECODING)
             
             # Extract generated tokens
             generated_tokens = []

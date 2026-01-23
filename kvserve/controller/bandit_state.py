@@ -1,29 +1,27 @@
 """
-Bandit state management for online learning.
+Simplified bandit state management for throughput correction.
 
-Maintains statistics for ε-greedy bandit:
-- N: Number of times a profile has been used
-- delta_bar: EWMA of prediction residuals (T_obs - T_hat)
+Only tracks throughput correction factors for each profile:
+- correction_factor: multiplier to adjust offline throughput to actual (EWMA)
 """
 
 import json
-from typing import Dict, Tuple
+from typing import Dict
 from pathlib import Path
 
 
 class BanditStateManager:
     """
-    Manages bandit state for online learning of model residuals.
+    Simplified bandit state manager.
+    
+    Only tracks throughput correction factor for each profile:
+        throughput_actual = throughput_offline × correction_factor
     
     State structure:
-        {(bucket_id, interval_id, profile_id): (N, delta_bar)}
-    
-    Where:
-        - N: Usage count
-        - delta_bar: Exponentially weighted moving average of residuals
+        {profile_id: correction_factor}
     """
     
-    def __init__(self, alpha: float = 0.2):
+    def __init__(self, alpha: float = 0.3):
         """
         Initialize bandit state manager.
         
@@ -32,75 +30,49 @@ class BanditStateManager:
                    Higher alpha gives more weight to recent observations
         """
         self.alpha = alpha
-        self.state: Dict[Tuple[int, int, str], Tuple[int, float]] = {}
+        self.state: Dict[str, float] = {}  # {profile_id: correction_factor}
     
-    def get_stats(
-        self,
-        bucket_id: int,
-        interval_id: int,
-        profile_id: str
-    ) -> Tuple[int, float]:
+    def get_throughput_correction(self, profile_id: str) -> float:
         """
-        Get statistics for a specific (bucket, interval, profile) triplet.
+        Get throughput correction factor for a profile.
         
         Args:
-            bucket_id: Accuracy bucket ID
-            interval_id: Bandwidth interval ID
             profile_id: Profile identifier
             
         Returns:
-            (N, delta_bar): Usage count and residual EWMA
+            Correction factor (default 1.0 = no correction)
         """
-        key = (bucket_id, interval_id, profile_id)
-        return self.state.get(key, (0, 0.0))
+        return self.state.get(profile_id, 1.0)
     
-    def update(
+    def update_throughput_correction(
         self,
-        bucket_id: int,
-        interval_id: int,
         profile_id: str,
-        delta_obs: float
+        actual_throughput: float,
+        predicted_throughput: float
     ):
         """
-        Update statistics with new observation using EWMA.
+        Update throughput correction factor using EWMA.
         
         Formula:
-            delta_bar_new = (1 - alpha) * delta_bar_old + alpha * delta_obs
+            correction_new = actual / predicted
+            correction_factor = (1-α) × correction_old + α × correction_new
         
         Args:
-            bucket_id: Accuracy bucket ID
-            interval_id: Bandwidth interval ID
             profile_id: Profile identifier
-            delta_obs: Observed residual (T_obs - T_hat)
+            actual_throughput: Measured throughput (MB/s)
+            predicted_throughput: Predicted throughput from profile (MB/s)
         """
-        key = (bucket_id, interval_id, profile_id)
-        N, delta_bar_old = self.state.get(key, (0, 0.0))
+        if predicted_throughput <= 0:
+            return
+        
+        # Calculate correction from this observation
+        correction_obs = actual_throughput / predicted_throughput
         
         # EWMA update
-        delta_bar_new = (1 - self.alpha) * delta_bar_old + self.alpha * delta_obs
+        correction_old = self.state.get(profile_id, 1.0)
+        correction_new = (1 - self.alpha) * correction_old + self.alpha * correction_obs
         
-        # Increment usage count
-        self.state[key] = (N + 1, delta_bar_new)
-    
-    def get_usage_count(
-        self,
-        bucket_id: int,
-        interval_id: int,
-        profile_id: str
-    ) -> int:
-        """Get usage count for a profile."""
-        N, _ = self.get_stats(bucket_id, interval_id, profile_id)
-        return N
-    
-    def get_residual(
-        self,
-        bucket_id: int,
-        interval_id: int,
-        profile_id: str
-    ) -> float:
-        """Get residual EWMA for a profile."""
-        _, delta_bar = self.get_stats(bucket_id, interval_id, profile_id)
-        return delta_bar
+        self.state[profile_id] = correction_new
     
     def reset(self):
         """Clear all state."""
@@ -113,19 +85,9 @@ class BanditStateManager:
         Args:
             path: File path to save state
         """
-        # Convert tuple keys to strings for JSON serialization
-        serializable_state = {
-            f"{bucket_id}_{interval_id}_{profile_id}": {
-                'N': N,
-                'delta_bar': delta_bar
-            }
-            for (bucket_id, interval_id, profile_id), (N, delta_bar) 
-            in self.state.items()
-        }
-        
         data = {
             'alpha': self.alpha,
-            'state': serializable_state
+            'state': self.state
         }
         
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -143,20 +105,10 @@ class BanditStateManager:
             data = json.load(f)
         
         self.alpha = data['alpha']
-        
-        # Convert string keys back to tuples
-        self.state = {}
-        for key_str, stats in data['state'].items():
-            parts = key_str.split('_', 2)
-            if len(parts) == 3:
-                bucket_id = int(parts[0])
-                interval_id = int(parts[1])
-                profile_id = parts[2]
-                key = (bucket_id, interval_id, profile_id)
-                self.state[key] = (stats['N'], stats['delta_bar'])
+        self.state = data['state']
     
     def get_total_states(self) -> int:
-        """Get total number of tracked states."""
+        """Get total number of tracked profiles."""
         return len(self.state)
     
     def get_memory_size(self) -> int:
@@ -166,14 +118,10 @@ class BanditStateManager:
         Returns:
             Approximate memory size in bytes
         """
-        # Each state: (int, int, str, int, float)
-        # Rough estimate: 3*8 (tuple overhead) + 8 (int) + 8 (float) + ~20 (string) = ~60 bytes
-        return self.get_total_states() * 60
+        # Each state: (str, float) ≈ ~30 bytes
+        return self.get_total_states() * 30
     
     def __repr__(self) -> str:
         return (f"BanditStateManager(alpha={self.alpha}, "
-                f"states={self.get_total_states()}, "
+                f"profiles={self.get_total_states()}, "
                 f"memory≈{self.get_memory_size()}B)")
-
-
-

@@ -159,6 +159,8 @@ class ProfileBuilder:
         
         # Extract quality metrics
         accuracy = raw_config.get('accuracy', 100.0)
+        # Normalize accuracy to 0-1 range (profile JSON stores as percentage like 95.93)
+        accuracy = accuracy / 100.0
         compression_ratio = raw_config.get('compression_ratio', 1.0)
         
         # Compute critical bandwidth

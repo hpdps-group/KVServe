@@ -2,15 +2,29 @@
 Codec compression components for KV cache compression
 """
 
-# Placeholder for future codec compression implementations
-# Components should inherit from kvserve.manager.components.Codec
-from kvserve.codec.nvcomp_func import nvCOMPCodec
-from kvserve.codec.kvserve_codec import KVServeCodec
-from kvserve.codec.cachegen_codec import CachegenCodec
-from kvserve.codec.kivi_codec import KIVICodec
+import importlib
 
 __all__ = [
     "KVServeCodec",
     "CachegenCodec",
     "KIVICodec",
+    "nvCOMPCodec",
 ]
+
+
+_LAZY_IMPORTS = {
+    "KVServeCodec": "kvserve.codec.kvserve_codec",
+    "CachegenCodec": "kvserve.codec.cachegen_codec",
+    "KIVICodec": "kvserve.codec.kivi_codec",
+    "nvCOMPCodec": "kvserve.codec.nvcomp_func",
+}
+
+
+def __getattr__(name: str):
+    module_path = _LAZY_IMPORTS.get(name)
+    if not module_path:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(module_path)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

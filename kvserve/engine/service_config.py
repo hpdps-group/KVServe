@@ -15,6 +15,7 @@ class ServiceConfig:
     They can be updated during service lifetime to simulate changing conditions.
     """
     bandwidth_gbps: float = 0.1  # Network bandwidth in Gbps (bits/s)
+    network_efficiency: float = 1.0  # Effective bandwidth multiplier (0-1)
     slo_ms: float = 5000.0  # Service Level Objective in milliseconds
     accuracy_requirement: float = 0.90  # Minimum accuracy requirement (0-1)
     model_name: Optional[str] = None  # Model name (e.g., "Llama-3.1-8B-Instruct")
@@ -24,6 +25,7 @@ class ServiceConfig:
         """Convert to dictionary"""
         return {
             'bandwidth_gbps': self.bandwidth_gbps,
+            'network_efficiency': self.network_efficiency,
             'slo_ms': self.slo_ms,
             'accuracy_requirement': self.accuracy_requirement,
             'model_name': self.model_name,

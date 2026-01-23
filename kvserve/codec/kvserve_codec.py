@@ -5,7 +5,12 @@ Implements codec compression using libraries like nvCOMP
 
 import torch
 from kvserve.manager.components import Codec
-from kvserve.codec import nvCOMPCodec
+
+try:
+    from kvserve.codec.nvcomp_func import nvCOMPCodec
+except Exception as exc:
+    nvCOMPCodec = None
+    _NVCOMP_IMPORT_ERROR = exc
 
 class KVServeCodec(Codec):
     """
@@ -38,6 +43,11 @@ class KVServeCodec(Codec):
         # Initialize the codec based on codec_type
         match self.codec_type:
             case "nvcomp":
+                if nvCOMPCodec is None:
+                    raise RuntimeError(
+                        "nvcomp/cupy is required for KVServeCodec but failed to import. "
+                        f"Original error: {_NVCOMP_IMPORT_ERROR}"
+                    )
                 self.codec = nvCOMPCodec(algorithm=self.nvcomp_algorithm, **kwargs)
             case _:
                 raise ValueError(f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp']")
@@ -77,6 +87,11 @@ class KVServeCodec(Codec):
         # Reinitialize codec with updated parameters
         match self.codec_type:
             case "nvcomp":
+                if nvCOMPCodec is None:
+                    raise RuntimeError(
+                        "nvcomp/cupy is required for KVServeCodec but failed to import. "
+                        f"Original error: {_NVCOMP_IMPORT_ERROR}"
+                    )
                 self.codec = nvCOMPCodec(algorithm=self.nvcomp_algorithm, **kwargs)
             case _:
                 raise ValueError(f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp']")

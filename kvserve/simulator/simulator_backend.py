@@ -16,6 +16,7 @@ import time
 import pickle
 import os
 import random
+import socket
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
@@ -27,6 +28,21 @@ def log_debug(msg): pass  # Suppress debug logs in simulator
 def log_warning(msg): print(f"[WARNING] {msg}")
 def log_error(msg): print(f"[ERROR] {msg}")
 def log_debug(msg): print(f"[DEBUG] {msg}")
+
+def pick_free_port(start_port: int, max_tries: int = 50) -> int:
+    for port in range(start_port, start_port + max_tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    log_warning(
+        f"No free port found in range {start_port}-{start_port + max_tries - 1}, "
+        f"falling back to {start_port}"
+    )
+    return start_port
 
 
 @dataclass
@@ -93,6 +109,7 @@ class SimulatorBackend:
         gpu_memory_utilization: float = 0.75,
         max_model_len: int = 2048,
         max_batch_size: int = 16,
+        block_size: int = 16,
         dtype: str = "float16",
         # Network simulation
         network_gbps: float = 80.0,
@@ -115,6 +132,7 @@ class SimulatorBackend:
         self.gpu_memory_utilization = gpu_memory_utilization
         self.max_model_len = max_model_len
         self.max_batch_size = max_batch_size
+        self.block_size = block_size
         self.dtype = dtype
         self.log_level = log_level
         self.compression_config = compression_config
@@ -143,6 +161,13 @@ class SimulatorBackend:
         base_time_ms = (size_gb / self.pcie_gbps) * 1000.0
         jitter = random.uniform(-self.io_jitter_ms, self.io_jitter_ms)
         return max(0.1, base_time_ms + jitter)
+
+    def _compression_enabled(self) -> bool:
+        if not self.compression_config:
+            return False
+        if isinstance(self.compression_config, dict):
+            return bool(self.compression_config.get("enabled", True))
+        return True
     
     async def initialize(self):
         """Initialize"""
@@ -239,7 +264,7 @@ class SimulatorBackend:
         # Calculate reasonable max_num_gpu_blocks based on max_batch_size and max_model_len
         # Each request can use up to max_model_len tokens
         # With block_size=16, max blocks per request = ceil(max_model_len / 16)
-        block_size = 16
+        block_size = self.block_size
         max_blocks_per_req = (self.max_model_len + block_size - 1) // block_size
         # Total blocks needed = max_batch_size * max_blocks_per_req + 10% buffer
         max_num_gpu_blocks = int(self.max_batch_size * max_blocks_per_req * 1.1)
@@ -487,7 +512,7 @@ class SimulatorBackend:
         log_info(f"[Simulator] Creating DecodeEngine (TP={self.tensor_parallel_size})...")
         
         # Calculate reasonable max_num_gpu_blocks based on max_batch_size and max_model_len
-        block_size = 16
+        block_size = self.block_size
         max_blocks_per_req = (self.max_model_len + block_size - 1) // block_size
         max_num_gpu_blocks = int(self.max_batch_size * max_blocks_per_req * 1.1)
         log_info(f"[Simulator] Calculated max_num_gpu_blocks={max_num_gpu_blocks} "
@@ -504,7 +529,7 @@ class SimulatorBackend:
             gpu_memory_utilization=self.gpu_memory_utilization,
             max_model_len=self.max_model_len,
             kv_transfer_manager=kv_transfer_manager,
-            nccl_init_method="tcp://localhost:29600",  # Different port from prefill
+            nccl_init_method=f"tcp://localhost:{pick_free_port(29600)}",  # Different port from prefill
             nccl_world_size=self.tensor_parallel_size,  # Only decode workers
             max_batch_size=self.max_batch_size,
             compression_config=self.compression_config,
@@ -664,6 +689,56 @@ class SimulatorBackend:
                     event.decompression_time_ms = info.get('decompression_time_ms', 0)
                     event.write_time_ms = info.get('write_time_ms', 0)
         
+        # Update controller bandit with simulated observations (batch window)
+        if (
+            self.service_config
+            and hasattr(self.compression_config, "select_profile")
+            and hasattr(self.compression_config, "update")
+        ):
+            bandwidth_gbps = self.service_config.bandwidth_gbps
+            B_mbps = (bandwidth_gbps * 1000.0) / 8.0
+            acc_req = self.service_config.accuracy_requirement
+            update_window = 5
+            pending_updates = []
+
+            for event in events.values():
+                input_length = len(event.prompt_token_ids)
+                V_bytes = event.original_kv_size_bytes or event.kv_size_bytes
+                T_model_ms = event.compute_only_ms
+                profile, context = self.compression_config.select_profile(
+                    input_length=input_length,
+                    V_bytes=V_bytes,
+                    B_mbps=B_mbps,
+                    T_model_ms=T_model_ms,
+                    acc_req=acc_req
+                )
+                if not profile or not context:
+                    continue
+
+                V_mb = V_bytes / (1024 * 1024)
+                if profile.harmonic_speed > 0:
+                    T_codec_ms = (V_mb / profile.harmonic_speed) * 1000.0
+                    offline_decompress_ms = max(0.0, T_codec_ms - event.compression_time_ms)
+                else:
+                    offline_decompress_ms = 0.0
+
+                # Prepare metrics for controller update
+                metrics = {
+                    'compression_time_ms': event.compression_time_ms,
+                    'decompression_time_ms': offline_decompress_ms,
+                    'kv_size_bytes': V_bytes
+                }
+                pending_updates.append((context, metrics))
+
+                if len(pending_updates) >= update_window:
+                    for ctx, mtx in pending_updates:
+                        self.compression_config.update(ctx, mtx)
+                    pending_updates.clear()
+
+            if pending_updates:
+                for ctx, mtx in pending_updates:
+                    self.compression_config.update(ctx, mtx)
+        
         # Save final results
         with open(output_file, 'wb') as f:
             pickle.dump({'events': events}, f)
@@ -688,7 +763,7 @@ class SimulatorBackend:
         print(f"  Network: {self.network_sim.throughput_gbps} Gbps (efficiency={self.network_sim.efficiency})")
         print(f"  Max Concurrent: {self.network_sim.max_concurrent}")
         print(f"  PCIe: {self.pcie_gbps} GB/s")
-        print(f"  Compression: {'ENABLED' if self.compression_config else 'DISABLED'}")
+        print(f"  Compression: {'ENABLED' if self._compression_enabled() else 'DISABLED'}")
         
         print(f"\n📈 Per-Request Timeline (ms) and KV Size:")
         header = (
@@ -747,7 +822,7 @@ class SimulatorBackend:
         print(f"  Avg Network Time: {avg_network:.2f} ms")
         print(f"  Avg IO Time: {avg_io:.2f} ms")
         
-        if self.compression_config:
+        if self._compression_enabled():
             print(f"  Avg Compression Time: {avg_compression:.2f} ms")
             print(f"  Avg Decompression Time: {avg_decompression:.2f} ms")
             avg_ratio = sum(r.compression_ratio for r in results if r.compression_ratio > 0) / len([r for r in results if r.compression_ratio > 0])

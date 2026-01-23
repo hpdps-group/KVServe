@@ -69,16 +69,17 @@ PREFILL_MAX_BATCH_SIZE = 4
 # Decode engine settings
 DECODE_GPU_MEMORY_UTILIZATION = 0.75
 DECODE_MAX_MODEL_LEN = 10000
-DECODE_MAX_BATCH_SIZE = 10
-DECODE_MAX_OUTPUT_LEN = 512
+DECODE_MAX_BATCH_SIZE = 4
+DECODE_MAX_OUTPUT_LEN = 128
 
 # Common settings
-DTYPE = "float16"
+DTYPE = "bfloat16"
+BLOCK_SIZE = 16
 
 # Network simulation parameters (for KV transfer timing)
-NETWORK_GBPS = 50.0
+NETWORK_GBPS = 10.0
 MAX_CONCURRENT_TRANSFERS_PREFILL = 2
-MAX_CONCURRENT_TRANSFERS_DECODE = 4
+MAX_CONCURRENT_TRANSFERS_DECODE = 2
 NETWORK_EFFICIENCY = 0.8
 NETWORK_JITTER_MS = 1.0
 
@@ -104,13 +105,14 @@ DECODE_RESULTS_DIR = "./sim_timestamps"
 # COMPRESSION CONFIGURATION - CHANGE HERE TO SWITCH MODES
 # ============================================================================
 
-# Select compression mode: "none", "custom", "default", or "controller"
+# Select compression mode: "none", "custom", "default", "controller", "cachegen", "kivi"
 COMPRESSION_MODE = "controller"  # <-- CHANGE THIS TO SWITCH MODES
 
 # -------- CUSTOM MODE CONFIG --------
 CUSTOM_COMPRESSION_CONFIG = {
     "enabled": True,
     "pipeline": ["quantizer", "codec"],
+    "impl": "kvserve",
     "quantizer_config": {
         "model_name": "Llama-3.1-8B-Instruct",
         "hybrid_ratio": 0.8,
@@ -126,6 +128,42 @@ CUSTOM_COMPRESSION_CONFIG = {
         "codec_type": "nvcomp",
         "nvcomp_algorithm": "ANS",
         "data_type": "|u1",
+    },
+    "min_compress_size": 1024,
+}
+
+# -------- CACHEGEN MODE CONFIG --------
+CACHEGEN_COMPRESSION_CONFIG = {
+    "enabled": True,
+    "pipeline": ["quantizer", "codec"],
+    "impl": "cachegen",
+    "quantizer_config": {
+        "model_name": "Llama-3.1-8B-Instruct",
+        "quantization_level": 2,
+        "high_max_value": 32,
+        "mid_max_value": 16,
+        "low_max_value": 12,
+    },
+    "codec_config": {
+        "codec_type": "torchac",
+    },
+    "min_compress_size": 1024,
+}
+
+# -------- KIVI MODE CONFIG --------
+KIVI_COMPRESSION_CONFIG = {
+    "enabled": True,
+    "pipeline": ["quantizer", "codec"],
+    "impl": "kivi",
+    "quantizer_config": {
+        "model_name": "Llama-3.1-8B-Instruct",
+        "nbits": 2,
+        "axis_key": "channel",
+        "axis_value": "token",
+        "group_size": 32,
+    },
+    "codec_config": {
+        "codec_type": "bitpacking",
     },
     "min_compress_size": 1024,
 }
@@ -146,8 +184,9 @@ CONTROLLER_DATASET = "qasper"
 
 SERVICE_CONFIG = ServiceConfig(
     bandwidth_gbps=NETWORK_GBPS,  # Network bandwidth in Gbps (bits/s)
+    network_efficiency=NETWORK_EFFICIENCY,
     slo_ms=5000.0,  # Service Level Objective in milliseconds
-    accuracy_requirement=0.92,  # Minimum accuracy requirement
+    accuracy_requirement=0.95,  # Minimum accuracy requirement
     model_name="Llama-3.1-8B-Instruct",
     dataset="longbench_qasper",
 )
@@ -309,6 +348,7 @@ async def worker_prefill(
         max_model_len=PREFILL_MAX_MODEL_LEN,
         max_batch_size=PREFILL_MAX_BATCH_SIZE,
         dtype=DTYPE,
+        block_size=BLOCK_SIZE,
         network_gbps=NETWORK_GBPS,
         max_concurrent_transfers=MAX_CONCURRENT_TRANSFERS_PREFILL,
         network_efficiency=NETWORK_EFFICIENCY,
@@ -357,6 +397,7 @@ async def worker_decode(tp: int, intermediate_file: str, final_file: str, compre
         max_model_len=DECODE_MAX_MODEL_LEN,
         max_batch_size=DECODE_MAX_BATCH_SIZE,
         dtype=DTYPE,
+        block_size=BLOCK_SIZE,
         network_gbps=NETWORK_GBPS,
         max_concurrent_transfers=MAX_CONCURRENT_TRANSFERS_DECODE,
         network_efficiency=NETWORK_EFFICIENCY,
@@ -494,6 +535,10 @@ async def main():
         
         if compression_mode == "custom":
             compression_config = CUSTOM_COMPRESSION_CONFIG
+        elif compression_mode == "cachegen":
+            compression_config = CACHEGEN_COMPRESSION_CONFIG
+        elif compression_mode == "kivi":
+            compression_config = KIVI_COMPRESSION_CONFIG
         elif compression_mode == "default":
             compression_config = "default"  # Worker will use default config
         elif compression_mode == "controller":
@@ -503,7 +548,7 @@ async def main():
                 dataset=CONTROLLER_DATASET,
                 prefill_machine=CONTROLLER_PREFILL_MACHINE,
                 decode_machine=CONTROLLER_DECODE_MACHINE,
-                epsilon=0.1
+                min_compression_ratio=7.0  # Filter out low compression ratio configs
             )
             service_config = SERVICE_CONFIG
         elif compression_mode == "none":
@@ -555,7 +600,14 @@ async def main():
     parser.add_argument("--request-rate", type=float, default=5.0, help="Request rate (RPS)")
     parser.add_argument("--lmeval-task", type=str, default=None, help="lm-eval-harness task name for prompts")
     parser.add_argument("--kv-dir", type=str, default=None, help="KV cache storage directory")
-    parser.add_argument("--compression", action="store_true", help="Enable KV compression")
+    parser.add_argument("--compression", action="store_true", help="Enable KV compression (use COMPRESSION_MODE)")
+    parser.add_argument(
+        "--compression-mode",
+        type=str,
+        default=None,
+        choices=["none", "custom", "default", "controller", "cachegen", "kivi"],
+        help="Override compression mode for this run",
+    )
     parser.add_argument("--prefill-results-dir", type=str, default=None, help="Directory to save prefill timestamp pkl files")
     parser.add_argument("--decode-results-dir", type=str, default=None, help="Directory to save decode timestamp pkl files")
     parser.add_argument("--prefill-results-file", type=str, default=None, help="Prefill timestamp pkl file to use for decode")
@@ -565,14 +617,28 @@ async def main():
     compression_config = None
     service_config = None
     compression_mode = "none"
-    
-    if args.compression and COMPRESSION_MODE != "none":
+
+    if args.compression_mode:
+        compression_mode = args.compression_mode
+    elif args.compression and COMPRESSION_MODE != "none":
         compression_mode = COMPRESSION_MODE
     
     if compression_mode == "custom":
         compression_config = CUSTOM_COMPRESSION_CONFIG
         print(f"\n{'='*60}")
         print("COMPRESSION: Custom Mode")
+        print(f"{'='*60}")
+        print(f"Pipeline: {compression_config['pipeline']}")
+    elif compression_mode == "cachegen":
+        compression_config = CACHEGEN_COMPRESSION_CONFIG
+        print(f"\n{'='*60}")
+        print("COMPRESSION: CacheGen Mode")
+        print(f"{'='*60}")
+        print(f"Pipeline: {compression_config['pipeline']}")
+    elif compression_mode == "kivi":
+        compression_config = KIVI_COMPRESSION_CONFIG
+        print(f"\n{'='*60}")
+        print("COMPRESSION: KIVI Mode")
         print(f"{'='*60}")
         print(f"Pipeline: {compression_config['pipeline']}")
     elif compression_mode == "default":
@@ -587,7 +653,7 @@ async def main():
             dataset=CONTROLLER_DATASET,
             prefill_machine=CONTROLLER_PREFILL_MACHINE,
             decode_machine=CONTROLLER_DECODE_MACHINE,
-            epsilon=0.1
+            min_compression_ratio=7.0  # Filter out low compression ratio configs
         )
         service_config = SERVICE_CONFIG
         print(f"\n{'='*60}")

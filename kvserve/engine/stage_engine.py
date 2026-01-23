@@ -18,6 +18,7 @@ from kvserve.engine.utils import (
     MigratingRequest,
     StepOutput,
     KVTransferStatus,
+    pick_free_port,
 )
 from kvserve.engine.service_config import ServiceConfig
 from kvserve.engine.block_manager import BlockManager, BlockLocation
@@ -160,6 +161,7 @@ class BaseStageEngine:
         self.kv_transfer_manager = kv_transfer_manager
         self.nccl_init_method = nccl_init_method
         self.nccl_world_size = nccl_world_size
+        self.tp_init_method = None
         self.max_model_len = max_model_len
         self.compression_config = compression_config
         self.service_config = service_config or ServiceConfig()
@@ -240,6 +242,17 @@ class BaseStageEngine:
         # CRITICAL: Create all workers first, THEN initialize in parallel
         # This avoids deadlock when TP>1 (workers wait for each other to join TP group)
         # ========================================================================
+        if self.tensor_parallel_size > 1:
+            stage_offset = 0 if self.stage == EngineStage.PREFILL else 1
+            base_port = int(self.nccl_init_method.split(':')[-1]) if self.nccl_init_method else 29500
+            tp_port = base_port + 100 + stage_offset
+            chosen_port = pick_free_port(tp_port)
+            if chosen_port != tp_port:
+                log_warning(
+                    f"[{self.stage.value}Engine] TP port {tp_port} in use, switching to {chosen_port}"
+                )
+            self.tp_init_method = f"tcp://localhost:{chosen_port}"
+            log_info(f"[{self.stage.value}Engine] TP init method: {self.tp_init_method}")
         
         # Step 1: Create all worker actors
         for tp_rank in range(num_workers_to_create):
@@ -273,6 +286,7 @@ class BaseStageEngine:
                 global_rank=global_rank,
                 world_size=self.nccl_world_size,
                 nccl_init_method=self.nccl_init_method,
+                tp_init_method=self.tp_init_method,
                 max_model_len=self.max_model_len,
                 compression_config=self.compression_config,
                 service_config=self.service_config,
@@ -1246,10 +1260,10 @@ class DecodeEngine(BaseStageEngine):
                 worker = self.get_next_worker()
                 if not worker:
                     return
-            outputs = await worker.step_decode.remote(
-                batched_requests,
-                kv_block_tables
-            )
+                outputs = await worker.step_decode.remote(
+                    batched_requests,
+                    kv_block_tables
+                )
         except Exception as e:
             log_error(f"[DecodeEngine] Error in step_decode: {e}")
             import traceback
