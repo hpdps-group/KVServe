@@ -48,6 +48,8 @@ class KVServeQuantizer(Quantizer):
         self.axis_key = kwargs.get("axis_key", "channel")
         self.axis_value = kwargs.get("axis_value", "token")
         self.split_type = kwargs.get("split_type", "head")
+        self.tensor_parallel_size = kwargs.get("tensor_parallel_size", 1)
+        self.tp_rank = kwargs.get("tp_rank", 0)
         
         # Validate quantizer parameters
         self.validate()
@@ -136,6 +138,39 @@ class KVServeQuantizer(Quantizer):
 
         # Validate quantizer parameters
         self.validate()
+
+    def _get_tp_head_scores_mask(self, num_heads: int) -> torch.Tensor:
+        """
+        Return head_scores_mask aligned to the current TP shard.
+
+        If head_scores_mask matches num_heads, return directly.
+        If running TP, slice the full head mask to this shard.
+        """
+        head_scores_mask = self.head_scores_mask
+        if head_scores_mask.shape[1] == num_heads:
+            return head_scores_mask
+
+        total_heads = head_scores_mask.shape[1]
+        if total_heads % num_heads != 0:
+            raise ValueError(
+                f"Head mask size mismatch: mask_heads={total_heads}, tensor_heads={num_heads}. "
+                "Cannot infer TP sharding."
+            )
+
+        inferred_tp_size = total_heads // num_heads
+        tp_size = self.tensor_parallel_size or inferred_tp_size
+        if tp_size * num_heads != total_heads:
+            raise ValueError(
+                f"TP mismatch: tp_size={tp_size}, tensor_heads={num_heads}, total_heads={total_heads}."
+            )
+        if self.tp_rank < 0 or self.tp_rank >= tp_size:
+            raise ValueError(
+                f"Invalid tp_rank={self.tp_rank} for tp_size={tp_size}."
+            )
+
+        start = self.tp_rank * num_heads
+        end = start + num_heads
+        return head_scores_mask[:, start:end]
     
     def quantize(
         self, 
@@ -168,8 +203,9 @@ class KVServeQuantizer(Quantizer):
 
         # Split the keys and values into low and high precision parts
         if self.split_type == "head":
-            low_keys, high_keys = head_split(layer_id, keys, self.head_scores_mask)
-            low_values, high_values = head_split(layer_id, values, self.head_scores_mask)
+            head_mask = self._get_tp_head_scores_mask(keys.shape[2])
+            low_keys, high_keys = head_split(layer_id, keys, head_mask)
+            low_values, high_values = head_split(layer_id, values, head_mask)
         elif self.split_type == "layer":
             low_keys, high_keys = layer_split(layer_id, keys, self.layer_scores_mask)
             low_values, high_values = layer_split(layer_id, values, self.layer_scores_mask)
@@ -228,8 +264,9 @@ class KVServeQuantizer(Quantizer):
 
         # Restore the low and high precision parts
         if self.split_type == "head":
-            low_keys, high_keys = head_restore(layer_id, keys, self.head_scores_mask)
-            low_values, high_values = head_restore(layer_id, values, self.head_scores_mask)
+            head_mask = self._get_tp_head_scores_mask(keys.shape[2])
+            low_keys, high_keys = head_restore(layer_id, keys, head_mask)
+            low_values, high_values = head_restore(layer_id, values, head_mask)
         elif self.split_type == "layer":
             low_keys, high_keys = layer_restore(layer_id, keys, self.layer_scores_mask)
             low_values, high_values = layer_restore(layer_id, values, self.layer_scores_mask)
@@ -242,8 +279,9 @@ class KVServeQuantizer(Quantizer):
 
         # Reconstruct the keys and values
         if self.split_type == "head":
-            keys = head_reconstruct(layer_id, low_keys, high_keys, self.head_scores_mask)
-            values = head_reconstruct(layer_id, low_values, high_values, self.head_scores_mask)
+            head_mask = self._get_tp_head_scores_mask(keys.shape[2])
+            keys = head_reconstruct(layer_id, low_keys, high_keys, head_mask)
+            values = head_reconstruct(layer_id, low_values, high_values, head_mask)
         elif self.split_type == "layer":
             keys = layer_reconstruct(layer_id, low_keys, high_keys, self.layer_scores_mask)
             values = layer_reconstruct(layer_id, low_values, high_values, self.layer_scores_mask)

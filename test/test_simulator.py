@@ -69,12 +69,12 @@ PREFILL_MAX_BATCH_SIZE = 4
 # Decode engine settings
 DECODE_GPU_MEMORY_UTILIZATION = 0.75
 DECODE_MAX_MODEL_LEN = 10000
-DECODE_MAX_BATCH_SIZE = 4
+DECODE_MAX_BATCH_SIZE = 10
 DECODE_MAX_OUTPUT_LEN = 128
 
 # Common settings
 DTYPE = "bfloat16"
-BLOCK_SIZE = 16
+BLOCK_SIZE = 32
 
 # Network simulation parameters (for KV transfer timing)
 NETWORK_GBPS = 10.0
@@ -111,7 +111,11 @@ COMPRESSION_MODE = "controller"  # <-- CHANGE THIS TO SWITCH MODES
 # -------- CUSTOM MODE CONFIG --------
 CUSTOM_COMPRESSION_CONFIG = {
     "enabled": True,
-    "pipeline": ["quantizer", "codec"],
+    "pipeline":[ "quantizer"],
+    # "transformer_config":{
+    #     "transform_type": "hadamard",
+    #     "seed": 0x3333,
+    # },
     "impl": "kvserve",
     "quantizer_config": {
         "model_name": "Llama-3.1-8B-Instruct",
@@ -176,6 +180,14 @@ CONTROLLER_PROFILE_PATH = os.path.join(
 CONTROLLER_PREFILL_MACHINE = "5090"
 CONTROLLER_DECODE_MACHINE = "5090"
 CONTROLLER_DATASET = "qasper"
+
+# If controller machines are not 4090/5090, relax chunking threshold to 5GB
+prefill_machine = CONTROLLER_PREFILL_MACHINE.lower()
+decode_machine = CONTROLLER_DECODE_MACHINE.lower()
+if ("4090" not in prefill_machine and "5090" not in prefill_machine) and (
+    "4090" not in decode_machine and "5090" not in decode_machine
+):
+    os.environ["KVSERVE_CHUNK_THRESHOLD_MB"] = "5120"
 
 
 # ============================================================================
@@ -596,6 +608,7 @@ async def main():
     # Main process: parse arguments with argparse
     parser = argparse.ArgumentParser(description="PD separation simulator test")
     parser.add_argument("mode", nargs="?", default="both", help="tp1|tp2|both|prefill-only|decode-only")
+    parser.add_argument("--tp", type=int, default=None, choices=[1, 2], help="TP size for prefill-only/decode-only")
     parser.add_argument("--num-requests", type=int, default=20, help="Number of requests")
     parser.add_argument("--request-rate", type=float, default=5.0, help="Request rate (RPS)")
     parser.add_argument("--lmeval-task", type=str, default=None, help="lm-eval-harness task name for prompts")
@@ -706,14 +719,19 @@ async def main():
         print("\n" + "#"*80)
         print("# PREFILL ONLY MODE")
         print("#"*80)
-        
-        intermediate_file = os.path.join(prefill_results_dir, "prefill_output.pkl")
-        
-        # Default to TP=1 for single-stage runs
+
+        tp = args.tp or 1
+        if tp == 2:
+            gpus = '0,1'
+            intermediate_file = os.path.join(prefill_results_dir, "prefill_tp2.pkl")
+        else:
+            gpus = '0'
+            intermediate_file = os.path.join(prefill_results_dir, "prefill_output.pkl")
+
         ret = run_stage_in_subprocess(
             'prefill',
-            1,
-            '0',
+            tp,
+            gpus,
             compression_mode,
             kv_dir,
             intermediate_file,
@@ -734,21 +752,29 @@ async def main():
         print("\n" + "#"*80)
         print("# DECODE ONLY MODE")
         print("#"*80)
-        
-        intermediate_file = args.prefill_results_file or os.path.join(prefill_results_dir, "prefill_output.pkl")
-        final_file = os.path.join(decode_results_dir, "decode_output.pkl")
+
+        tp = args.tp or 1
+        if tp == 2:
+            gpus = '0,1'
+            default_prefill = os.path.join(prefill_results_dir, "prefill_tp2.pkl")
+            final_file = os.path.join(decode_results_dir, "decode_tp2.pkl")
+        else:
+            gpus = '1'
+            default_prefill = os.path.join(prefill_results_dir, "prefill_output.pkl")
+            final_file = os.path.join(decode_results_dir, "decode_output.pkl")
+
+        intermediate_file = args.prefill_results_file or default_prefill
         csv_file = os.path.join(OUTPUT_DIR, "sim_results_decode_only.csv")
-        
+
         if not os.path.exists(intermediate_file):
             print(f"❌ Intermediate file not found: {intermediate_file}")
             print(f"   Please run prefill-only mode first or specify --prefill-results-file")
             return
         
-        # Default to TP=1 for single-stage runs
         ret = run_stage_in_subprocess(
             'decode',
-            1,
-            '1',
+            tp,
+            gpus,
             compression_mode,
             kv_dir,
             intermediate_file,
@@ -812,25 +838,32 @@ async def main():
         print("# TEST 2: TP=2 (Distributed)")
         print("#"*80)
         
-        intermediate_file = os.path.join(prefill_results_dir, "prefill_tp2.pkl")
+        # Support custom prefill results file like TP1
+        if args.prefill_results_file:
+            intermediate_file = args.prefill_results_file
+        else:
+            intermediate_file = os.path.join(prefill_results_dir, "prefill_tp2.pkl")
         final_file = os.path.join(decode_results_dir, "decode_tp2.pkl")
         csv_file = os.path.join(OUTPUT_DIR, "sim_results_tp2.csv")
         
-        # Run prefill (GPU 0,1)
-        ret = run_stage_in_subprocess(
-            'prefill',
-            2,
-            '0,1',
-            compression_mode,
-            kv_dir,
-            intermediate_file,
-            str(args.num_requests),
-            str(args.request_rate),
-            *( [args.lmeval_task] if args.lmeval_task else [] ),
-        )
-        if ret != 0:
-            print(f"❌ TP=2 Prefill failed")
-            return
+        # Run prefill (GPU 0,1) - skip if using custom file
+        if not args.prefill_results_file:
+            ret = run_stage_in_subprocess(
+                'prefill',
+                2,
+                '0,1',
+                compression_mode,
+                kv_dir,
+                intermediate_file,
+                str(args.num_requests),
+                str(args.request_rate),
+                *( [args.lmeval_task] if args.lmeval_task else [] ),
+            )
+            if ret != 0:
+                print(f"❌ TP=2 Prefill failed")
+                return
+        else:
+            print(f"[TP=2] Using existing prefill results: {intermediate_file}")
         
         # Run decode (GPU 0,1 - reuse same GPUs, time-multiplexed)
         ret = run_stage_in_subprocess(

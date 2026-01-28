@@ -311,6 +311,9 @@ class SimulatorBackend:
             )
             self.prefill_engine.scheduler.add_request(request)
         
+        # Reset network simulator state to avoid cross-experiment contamination
+        self.network_sim.reset()
+        
         log_info(f"[Simulator] Running prefill for {len(prompts)} requests...")
         t_prefill_start = time.time()
         
@@ -382,7 +385,6 @@ class SimulatorBackend:
             if req_id in events:
                 event = events[req_id]
                 event.prefill_compute_ms = (migrating_req.req.prefill_end_time - migrating_req.req.prefill_start_time) * 1000.0
-                event.t_p_end = event.t0_arrival + event.prefill_compute_ms
                 event.prefill_done = True
                 event.prompt_token_ids = migrating_req.expanded_prompt_token_ids or []
                 
@@ -402,18 +404,22 @@ class SimulatorBackend:
                     
                     # Estimate IO pack time
                     event.io_pack_ms = self._estimate_io_time(event.kv_size_bytes)
+                
+                # CRITICAL FIX: t_p_end must include compression time
+                # Timeline: t0 → [prefill] → [compress] → [network] → ...
+                event.t_p_end = event.t0_arrival + event.prefill_compute_ms + event.compression_time_ms
         
         # Simulate network transfers and calculate arrival times
         log_info(f"[Simulator] Simulating network transfers...")
-        for req_id, event in events.items():
+        # IMPORTANT: Process events in order of prefill completion time (t_p_end)
+        # to correctly simulate network queueing behavior
+        sorted_events = sorted(events.items(), key=lambda x: x[1].t_p_end)
+        log_info(f"[Simulator] Network simulation order (by t_p_end): {[req_id for req_id, _ in sorted_events[:5]]} ...")
+        for req_id, event in sorted_events:
             if event.kv_size_bytes > 0:
-                # For TP>1: Use max shard size (parallel transfer)
-                # For TP=1: Use total size
-                if req_id in manifest and 'kv_bytes_max_shard' in manifest[req_id]:
-                    network_sim_size = manifest[req_id]['kv_bytes_max_shard']
-                    log_debug(f"[Simulator] {req_id}: Using max shard size {network_sim_size / 1e6:.2f} MB for network sim (total {event.kv_size_bytes / 1e6:.2f} MB)")
-                else:
-                    network_sim_size = event.kv_size_bytes
+                # Use total KV size for network simulation.
+                # TP>1 still traverses the same network bandwidth, so total size matters.
+                network_sim_size = event.kv_size_bytes
                 
                 # Network transfer starts immediately after prefill completes (no IO pack in real scenario)
                 # IO pack time is simulator-internal and should not affect end-to-end latency
@@ -470,6 +476,9 @@ class SimulatorBackend:
         from kvserve.engine.utils import Request, MigratingRequest, EngineStage
         
         log_info(f"[Simulator] Phase 2: Running Decode stage...")
+        
+        # Reset network simulator state to avoid cross-experiment contamination
+        self.network_sim.reset()
         
         # Load prefill results
         with open(input_file, 'rb') as f:
@@ -660,11 +669,6 @@ class SimulatorBackend:
         # Update events with actual decode compute timing (only worker.step_decode.remote time)
         for req_id, event in events.items():
             event.decode_compute_ms = per_request_decode_ms
-            
-            # t_d_end should NOT include io_unpack_ms, as IO is simulator-internal operation
-            # In real PD separation, KV arrives via network at t_net_arrive, then decode starts
-            # So: t_d_end = t_net_arrive + decode_compute_ms
-            event.t_d_end = event.t_net_arrive + event.decode_compute_ms
             event.decode_done = True
             
             # Get decompression time from updated manifest
@@ -688,6 +692,11 @@ class SimulatorBackend:
                     info = updated_manifest[req_id]
                     event.decompression_time_ms = info.get('decompression_time_ms', 0)
                     event.write_time_ms = info.get('write_time_ms', 0)
+            
+            # CRITICAL FIX: t_d_end must include decompression time
+            # Timeline: ... → [network arrive] → [decompress] → [decode] → end
+            # Note: io_unpack_ms is simulator-internal and doesn't affect real latency
+            event.t_d_end = event.t_net_arrive + event.decompression_time_ms + event.decode_compute_ms
         
         # Update controller bandit with simulated observations (batch window)
         if (

@@ -6,6 +6,7 @@ Coordinates transformer, quantizer, and codec compression components
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import copy
+import os
 import torch
 import gc
 import msgpack
@@ -396,12 +397,16 @@ class CompressionManager:
             if original_size < self.config.min_compress_size:
                 return None
             
-            # Auto-chunking: If data > 500MB, use chunked compression to reduce memory peak
-            CHUNK_THRESHOLD_MB = 500
-            chunk_threshold_bytes = CHUNK_THRESHOLD_MB * 1024 * 1024
+            # Auto-chunking: If data > threshold, use chunked compression to reduce memory peak
+            # Allow override via env var for simulation tuning
+            try:
+                chunk_threshold_mb = int(os.getenv("KVSERVE_CHUNK_THRESHOLD_MB", "500"))
+            except ValueError:
+                chunk_threshold_mb = 500
+            chunk_threshold_bytes = chunk_threshold_mb * 1024 * 1024
             
             if original_size > chunk_threshold_bytes:
-                log_info(f"[CompressionManager] Large KV cache detected ({original_size/(1024**2):.2f} MB > {CHUNK_THRESHOLD_MB} MB), using chunked compression")
+                log_info(f"[CompressionManager] Large KV cache detected ({original_size/(1024**2):.2f} MB > {chunk_threshold_mb} MB), using chunked compression")
                 return self._compress_all_layers_chunked(all_layers_data, request_id, metadata, chunk_size=8)
             
             # Otherwise, use fast single-batch compression (original logic below)
