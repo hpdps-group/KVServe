@@ -53,3 +53,7 @@ ray_results/
 *.md
 !README.md
 
+
+# Simulation / cache data (large binaries)
+*.pkl
+simulation_kv/
