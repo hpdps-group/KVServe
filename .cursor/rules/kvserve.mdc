@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+你不能主动测试文件，出分我让你进行测试，测试前启动虚拟环境：source /root/lzd/torch2.7.1/bin/activate
