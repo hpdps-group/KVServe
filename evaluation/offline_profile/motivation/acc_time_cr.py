@@ -8,7 +8,7 @@ from matplotlib.patches import ConnectionPatch, Rectangle
 
 # ================= GLOBAL CONFIGURATION =================
 OUTPUT_PDF = "acc_time_cr_combined.pdf"
-FIGURE_SIZE = (10, 3) # Wider figure for two subplots
+FIGURE_SIZE = (10, 3.5) # Wider figure for two subplots
 GRID_ALPHA = 0.3
 LINE_WIDTH = 2
 
@@ -18,15 +18,15 @@ plt.rcParams.update({
     "font.size": 10,
     "axes.labelsize": 12,
     "axes.titlesize": 12,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
     "legend.fontsize": 10,
-    "axes.linewidth": 1.0,
+    "axes.linewidth": 1.5,
     "lines.linewidth": LINE_WIDTH,
     "grid.linestyle": "--",
     "grid.alpha": GRID_ALPHA,
-    "xtick.direction": "in",
-    "ytick.direction": "in",
+    "xtick.direction": "out",
+    "ytick.direction": "out",
     "figure.dpi": 300,
     "savefig.dpi": 600,
     "savefig.bbox": "tight",
@@ -37,10 +37,10 @@ LEFT_DATA_FILE = "acc-time.csv"
 LEFT_X_LABEL = "Dataset Percentage (%)"
 LEFT_Y_LABEL_LEFT = "Accuracy (%)"
 LEFT_Y_LABEL_RIGHT = "Time (min)"
-LEFT_BAR_COLOR = '#1f77b4'
-LEFT_LINE_COLOR = '#d62728'
-LEFT_SHADE_COLOR = '#d62728'
-LEFT_BAR_WIDTH = 0.5
+LEFT_BAR_COLOR = '#c7c7c7'
+LEFT_LINE_COLOR = '#e41a1c'
+LEFT_SHADE_COLOR = '#e41a1c'
+LEFT_BAR_WIDTH = 0.65
 
 # Custom Ticks for Left Plot
 CUSTOM_Y_TICKS_LEFT = [0, 70, 75, 80, 82, 84, 86, 88, 90]
@@ -61,7 +61,7 @@ RIGHT_LEGEND_LABELS = {
     "27.json": "MixHQ 3",
     "43.json": "MixHQ 4",
 }
-RIGHT_COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd']
+RIGHT_COLORS = ['#1F77B4', '#9467BD', '#FF7F0E', '#2CA02C']
 
 # Zoom Config for Right Plot
 ENABLE_ZOOM = True
@@ -71,7 +71,7 @@ ZOOM_CONFIG = {
     "loc": "upper center",
     "width": "40%",
     "height": "30%",
-    "bbox_to_anchor": (0, 0, 1, 1)
+    "bbox_to_anchor": (-0.1, 0, 1, 1)
 }
 
 # ================= HELPERS =================
@@ -123,11 +123,11 @@ def plot_left_acc_time(ax1):
     time_mapped = map_values_to_linear_ticks(time_min_real, CUSTOM_Y_TICKS_RIGHT)
 
     # --- Bars (Right Axis) ---
-    bars = ax2.bar(x_indices, time_mapped, width=LEFT_BAR_WIDTH, color=LEFT_BAR_COLOR, alpha=0.5, label="Time", zorder=1)
+    bars = ax2.bar(x_indices, time_mapped, width=LEFT_BAR_WIDTH, color=LEFT_BAR_COLOR, alpha=1, label="Time", zorder=1, edgecolor='black', linewidth=1.5, hatch='..')
     for bar, real_val in zip(bars, time_min_real):
         height = bar.get_height()
         ax2.text(bar.get_x() + bar.get_width()/2., height + 0.05,
-                 f'{int(real_val)}', ha='center', va='bottom', fontsize=9, color='black')
+                 f'{int(real_val)}', ha='center', va='bottom', fontsize=12, fontweight='bold', color='black')
 
     # --- Line (Left Axis) ---
     line, = ax1.plot(x_indices, acc_mapped, color=LEFT_LINE_COLOR, marker='o', markersize=6, label="Accuracy", zorder=10)
@@ -162,26 +162,32 @@ def plot_left_acc_time(ax1):
         )
 
     # Styles
-    ax1.set_xlabel(LEFT_X_LABEL, fontweight='bold', fontsize=12)
+    ax1.set_xlabel(LEFT_X_LABEL, fontweight='bold', fontsize=15)
     ax1.set_xticks(x_indices)
-    ax1.set_xticklabels([f"{int(val)}" if val.is_integer() else str(val) for val in x_real])
+    ax1.set_xticklabels([f"{int(val)}" if val.is_integer() else str(val) for val in x_real], fontsize=12)
     ax1.set_xlim(min(x_indices) - 0.6, max(x_indices) + 0.6)
 
-    ax1.set_ylabel(LEFT_Y_LABEL_LEFT, fontweight='bold', fontsize=12)
+    ax1.set_ylabel(LEFT_Y_LABEL_LEFT, fontweight='bold', fontsize=15)
     ax1.set_yticks(np.arange(len(CUSTOM_Y_TICKS_LEFT)))
-    ax1.set_yticklabels([str(y) for y in CUSTOM_Y_TICKS_LEFT])
+    ax1.set_yticklabels([str(y) for y in CUSTOM_Y_TICKS_LEFT], fontsize=12)
     ax1.set_ylim(0, len(CUSTOM_Y_TICKS_LEFT) - 1)
     ax1.spines['top'].set_visible(False)
 
-    ax2.set_ylabel(LEFT_Y_LABEL_RIGHT, fontweight='bold', fontsize=12, rotation=270, labelpad=15)
+    ax2.set_ylabel(LEFT_Y_LABEL_RIGHT, fontweight='bold', fontsize=15, rotation=270, labelpad=18)
     ax2.set_yticks(np.arange(len(CUSTOM_Y_TICKS_RIGHT)))
-    ax2.set_yticklabels([str(y) for y in CUSTOM_Y_TICKS_RIGHT])
+    ax2.set_yticklabels([str(y) for y in CUSTOM_Y_TICKS_RIGHT], fontsize=12)
     ax2.set_ylim(0, len(CUSTOM_Y_TICKS_RIGHT) - 1)
     ax2.spines['top'].set_visible(False)
 
     ax1.set_zorder(ax2.get_zorder() + 1)
     ax1.patch.set_visible(False)
     ax1.grid(True, axis='y', linestyle='--', alpha=GRID_ALPHA)
+
+    # Add Legend (Combined from both axes)
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    # Order: Line (Acc) then Bar (Time) as requested, or just combined
+    ax1.legend(h1 + h2, l1 + l2, loc='upper left', ncol=2, frameon=False, prop={'weight': 'bold', 'size': 10}, columnspacing=0.7)
 
 def plot_right_cr(ax):
     datasets = []
@@ -201,13 +207,15 @@ def plot_right_cr(ax):
         for label, x, y, color in datasets:
             target_ax.plot(x, y, label=label, color=color, alpha=0.9, linewidth=LINE_WIDTH)
         if legend:
-            target_ax.legend(frameon=False)
+            target_ax.legend(frameon=False, prop={'weight': 'bold', 'size': 10})
 
     # Main lines
     draw_lines_helper(ax, legend=True)
     
-    ax.set_xlabel(RIGHT_X_LABEL, fontweight='bold', fontsize=12)
-    ax.set_ylabel(RIGHT_Y_LABEL, fontweight='bold', fontsize=12)
+    ax.set_xlabel(RIGHT_X_LABEL, fontweight='bold', fontsize=15)
+    ax.set_ylabel(RIGHT_Y_LABEL, fontweight='bold', fontsize=15)
+    ax.tick_params(axis='x', labelsize=12)
+    ax.tick_params(axis='y', labelsize=12)
     ax.grid(True, linestyle='--', alpha=GRID_ALPHA)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)

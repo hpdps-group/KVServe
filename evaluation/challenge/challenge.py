@@ -4,6 +4,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 import os
 from scipy.interpolate import PchipInterpolator
+from matplotlib.lines import Line2D
 
 # ==========================================
 # CONFIGURATION
@@ -11,7 +12,7 @@ from scipy.interpolate import PchipInterpolator
 plt.rcParams.update({
     "font.size": 9,
     "font.family": "DejaVu Sans",
-    "axes.linewidth": 0.9,
+    "axes.linewidth": 1.5,
     "figure.dpi": 300,
     "savefig.dpi": 600,
     "savefig.bbox": "tight",
@@ -36,7 +37,7 @@ OUTPUT_IMAGE_PATH = os.path.join(current_dir, "challenge_combined.pdf")
 def plot_search_space(ax):
     # 1. Define Control Points
     stages = [
-        "No\nCompression", 
+        "No\nComp", 
         "Pipeline\nSelection", 
         "Moudle\nChoice", 
         "Coarse\nSetting", 
@@ -81,14 +82,14 @@ def plot_search_space(ax):
     text_y_val = 15000
     text_y_trans = transform_y(text_y_val)
     
-    ax.text(1.0, text_y_trans, "Pipeline/Module Choices", 
-            ha='center', fontsize=11, color=COLOR_TEXT_GREY, fontweight='bold')
+    ax.text(1.0, text_y_trans - 1, "Pipeline/Module\nChoices", 
+            ha='center', fontsize=13, color=COLOR_TEXT_GREY, fontweight='bold')
              
-    ax.text(3, text_y_trans, "Hybrid Parameter Tuning", 
-            ha='center', fontsize=11, color=COLOR_TEXT_RED, fontweight='bold')
+    ax.text(3, text_y_trans - 1, "Hybrid Parameter\nTuning", 
+            ha='center', fontsize=13, color=COLOR_TEXT_RED, fontweight='bold')
 
     # Draw Smooth Curve
-    ax.plot(x_smooth, y_smooth_trans, color=COLOR_PARETO_LINE, linestyle='-', linewidth=2, 
+    ax.plot(x_smooth, y_smooth_trans, color=COLOR_PARETO_LINE, linestyle='-', linewidth=3, 
             label='Search Space Size', zorder=5)
     
     # Draw Markers
@@ -96,16 +97,16 @@ def plot_search_space(ax):
 
     # 4. Budget Line
     budget_y_trans = transform_y(200)
-    ax.axhline(y=budget_y_trans, color=COLOR_BUDGET_LINE, linestyle='--', linewidth=1.5, 
+    ax.axhline(y=budget_y_trans, color=COLOR_BUDGET_LINE, linestyle='--', linewidth=2, 
                zorder=3)
     
     ax.text(1, budget_y_trans + 0.2, 'Profile Budget', color=COLOR_BUDGET_LINE, 
-            fontsize=9, verticalalignment='bottom', fontweight='bold', ha='center')
+            fontsize=11, verticalalignment='bottom', fontweight='bold', ha='center')
 
     # 5. Axes Configuration
     ax.set_xticks(x_indices)
-    ax.set_xticklabels(stages, fontsize=10)
-    ax.set_xlabel('Configuration Granularity', fontweight='bold', fontsize=12, labelpad=10)
+    ax.set_xticklabels(stages, fontsize=12)
+    ax.set_xlabel('Configuration Granularity', fontweight='bold', fontsize=15, labelpad=10)
     
     # Y Axis - Manual Ticks
     tick_values = [1, 10, 100, 1000, 10000]
@@ -113,12 +114,12 @@ def plot_search_space(ax):
     tick_labels = [r'$10^0$', r'$10^1$', r'$10^2$', r'$10^3$', r'$10^4$']
     
     ax.set_yticks(tick_locs)
-    ax.set_yticklabels(tick_labels, fontsize=10)
-    ax.set_ylabel('Search Space Size', fontweight='bold', fontsize=12)
+    ax.set_yticklabels(tick_labels, fontsize=12)
+    ax.set_ylabel('Search Space Size', fontweight='bold', fontsize=15)
     
     ax.set_ylim(-0.5, transform_y(40000))
     ax.grid(True, linestyle=':', alpha=0.6)
-    ax.set_title("Search Space Growth", fontweight='bold', fontsize=12)
+    ax.set_title("Search Space Growth", fontweight='bold', fontsize=15)
 
 
 # ==========================================
@@ -196,15 +197,36 @@ def plot_pareto_frontier(ax):
     # Non-Pareto Points
     if non_pareto_x:
         ax.scatter(non_pareto_x, non_pareto_y, facecolors='none', edgecolors=COLOR_ALL_POINTS, 
-                   linewidths=1.5, label='Trials')
+                   linewidths=1.5, s=20, label='Dominated points')
 
     # Decoration
-    ax.set_title("Pareto Frontier", fontweight='bold', fontsize=12)
-    ax.set_xlabel('Relative Accuracy (%)', fontweight='bold', fontsize=12, labelpad=10)
-    ax.set_ylabel('Latency (ms)', fontweight='bold', fontsize=12)
+    ax.set_title("Pareto Frontier", fontweight='bold', fontsize=15)
+    ax.set_xlabel('Relative Accuracy (%)', fontweight='bold', fontsize=15, labelpad=10)
+    ax.set_ylabel('Latency (ms)', fontweight='bold', fontsize=15, rotation=270, labelpad=20)
+    # 将y轴刻度和标签移到右侧
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position('right')
+    # 设置y轴刻度只显示整数，字体大小为12
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{int(x)}'))
+    ax.tick_params(axis='y', labelsize=12)
+    ax.tick_params(axis='x', labelsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
     
-    ax.legend(prop={'weight': 'bold'}, loc='upper right')
+    # Custom Legend: Pareto Frontier solid line
+    handles, labels = ax.get_legend_handles_labels()
+    new_handles = []
+    
+    for h, l in zip(handles, labels):
+        if l == 'Pareto Frontier':
+            # Replacement handle with solid line
+            h_new = Line2D([0], [0], color=COLOR_PARETO_LINE, linestyle='-', linewidth=2, 
+                           marker='o', markersize=7)
+            new_handles.append(h_new)
+        else:
+            new_handles.append(h)
+            
+    ax.legend(handles=new_handles, labels=labels, prop={'weight': 'bold', 'size': 11}, loc='lower left')
     
     # Invert Y axis (Latency: lower is better -> higher visual position preferred in this context? 
     # Original code inverted Y: plt.gca().invert_yaxis(). 
@@ -221,10 +243,7 @@ def plot_pareto_frontier(ax):
 
 def main():
     # Create 1x2 Subplots
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    
-    # Adjust spacing between subplots
-    plt.subplots_adjust(wspace=0.25)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     
     # Plot Left
     plot_search_space(axes[0])
@@ -234,6 +253,9 @@ def main():
     
     # Save
     plt.tight_layout()
+    
+    # Adjust spacing between subplots (after tight_layout to ensure it takes effect)
+    plt.subplots_adjust(wspace=0.02)  # 可以调整这个值：值越大，间距越大
     
     # Align x-axis labels (must be done after tight_layout)
     fig.align_xlabels(axes)

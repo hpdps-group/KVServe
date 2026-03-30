@@ -2,6 +2,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm  # 新增: 用于创建独立的 Colorbar
+from matplotlib.colors import LinearSegmentedColormap # 新增: 用于自定义渐变色
 from matplotlib.ticker import MultipleLocator  # 用于设置刻度间隔
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.interpolate import Rbf
@@ -11,7 +12,7 @@ import os
 plt.rcParams.update({
     "font.size": 9,
     "font.family": "DejaVu Sans",
-    "axes.linewidth": 0.9,
+    "axes.linewidth": 1.5,
     "figure.dpi": 300,
     "savefig.dpi": 600,
     "savefig.bbox": "tight",
@@ -53,7 +54,32 @@ EXTEND_Z_MIN = 0.25    # 底部扩展
 EXTEND_Z_MAX = 0.05    # 顶部扩展 (之前设太大可能导致上方空旷，改回0.1)
 
 # === 美化配置 ===
-CMAP_NAME = 'viridis_r'
+USE_CUSTOM_CMAP = True # 开关：True 使用自定义渐变色，False 使用 Matplotlib 内置 Colormap
+
+# 1. Matplotlib 内置 Colormap 名称 (当 USE_CUSTOM_CMAP = False 时生效)
+CMAP_NAME = 'coolwarm_r' 
+
+# 2. 自定义渐变色配置 (当 USE_CUSTOM_CMAP = True 时生效)
+# 这里的颜色列表定义了从 Z 轴最小值 (Low Value) 到 最大值 (High Value) 的渐变
+CUSTOM_COLORS = [
+
+
+
+
+    "#d73027",   # 红色 (高 Latency)
+    "#fc8d59",    
+    "#fee090",
+    "#e0f3f8",    
+    "#91bfdb",    
+    "#4575b4",  # 蓝色 (低 Latency)
+
+]
+
+if USE_CUSTOM_CMAP:
+    FINAL_CMAP = LinearSegmentedColormap.from_list("custom_pareto_cmap", CUSTOM_COLORS)
+else:
+    FINAL_CMAP = CMAP_NAME
+
 GRID_DENSITY = 2000
 SURFACE_ALPHA = 0.65
 
@@ -182,7 +208,7 @@ def main():
 
     if ZI is not None:
         # 绘制曲面
-        surf = ax.plot_surface(XI, YI, ZI, cmap=CMAP_NAME, alpha=SURFACE_ALPHA,
+        surf = ax.plot_surface(XI, YI, ZI, cmap=FINAL_CMAP, alpha=SURFACE_ALPHA,
                                rcount=100, ccount=100,
                                vmin=min(z_pareto), vmax=max(z_pareto),
                                edgecolor='none', antialiased=True, shade=True)
@@ -191,7 +217,7 @@ def main():
                           color='white', alpha=0.1, linewidth=0.5)
 
     # 绘制 Pareto 关键点
-    p_scatter = ax.scatter(x_pareto, y_pareto, z_pareto, c=z_pareto, cmap=CMAP_NAME, 
+    p_scatter = ax.scatter(x_pareto, y_pareto, z_pareto, c=z_pareto, cmap=FINAL_CMAP, 
                            s=50, edgecolors='black', linewidth=0.8, alpha=1.0, 
                            label='Pareto Optimal', zorder=10)
 
@@ -219,7 +245,7 @@ def main():
 
     # Colorbar
     norm = plt.Normalize(vmin=min(z_pareto), vmax=max(z_pareto))
-    sm = cm.ScalarMappable(cmap=CMAP_NAME, norm=norm)
+    sm = cm.ScalarMappable(cmap=FINAL_CMAP, norm=norm)
     sm.set_array([]) # 必须设置一个空数组
     
     cbar = fig.colorbar(sm, ax=ax, shrink=0.5, aspect=20, pad=0.015, alpha=SURFACE_ALPHA)

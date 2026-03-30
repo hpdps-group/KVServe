@@ -1,0 +1,6 @@
+method,max_cr,iters
+w/o Exp,8.5290,203
+w/o Enc,8.9584,276
+w/o Prune,9.3127,300
+w/o Stop,9.3127,300
+Full,9.3127,194

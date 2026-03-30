@@ -21,9 +21,24 @@ NUM_POINTS = 300
 
 # 2. 压缩方案数据
 COMPRESSION_SCENARIOS = [
-    {"name": "Cachegen", "compressed_size_gb": 0.14492, "time_overhead": 0.0098 + 0.0473 + 0.0074 + 0.0435},
-    {"name": "KIVI", "compressed_size_gb": 0.23443, "time_overhead": 0.0402 + 0.0144},    
-    {"name": "KVServe", "compressed_size_gb": 0.21654, "time_overhead": 0.0032 + 0.0164 + 0.0019 + 0.0079},
+    {
+        "name": "Cachegen",
+        "compressed_size_gb": 0.14492,
+        "compression_time": 0.0098 + 0.0473,
+        "decompression_time": 0.0074 + 0.0435,
+    },
+    {
+        "name": "KIVI",
+        "compressed_size_gb": 0.23443,
+        "compression_time": 0.0402,
+        "decompression_time": 0.0144,
+    },
+    {
+        "name": "KVServe",
+        "compressed_size_gb": 0.21654,
+        "compression_time": 0.0032 + 0.0164,
+        "decompression_time": 0.0019 + 0.0079,
+    },
 ]
 
 # 3. 放大镜配置
@@ -82,7 +97,7 @@ def plot_bandwidth_latency():
         # --- B. 绘制压缩方案 ---
         colors = plt.cm.tab10(np.linspace(0, 1, len(COMPRESSION_SCENARIOS)))
         for i, scenario in enumerate(COMPRESSION_SCENARIOS):
-            total_latency = scenario["time_overhead"] + calculate_transmission_time(scenario["compressed_size_gb"], real_bandwidths)
+            total_latency = scenario["compression_time"] + scenario["decompression_time"] + calculate_transmission_time(scenario["compressed_size_gb"], real_bandwidths)
             
             # [关键修改]：同样对这些线条做截断处理
             plot_data = total_latency.copy()
