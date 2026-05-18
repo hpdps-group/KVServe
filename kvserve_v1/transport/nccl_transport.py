@@ -25,6 +25,7 @@ torch.cuda.synchronize() during CUDA graph capture is not blocked.
 
 import ctypes
 import threading
+import time
 from collections import defaultdict, deque
 from typing import Any, Optional
 
@@ -106,7 +107,9 @@ class NcclTransport:
             self._lock = threading.Lock()
             # ZMQ "request_id" is the connector wire key (transfer_key from connector).
             # Multiple PUTs for the same key append in order; deque preserves FIFO.
-            self._received: dict[str, deque[tuple[list[str], Any]]] = (
+            self._received: dict[
+                str, deque[tuple[list[str], Any, dict[str, Any] | None]]
+            ] = (
                 defaultdict(deque))
             self._recv_stream = torch.cuda.Stream(device=self.device)
 
@@ -117,8 +120,13 @@ class NcclTransport:
 
     # ── Producer-side ──────────────────────────────────────────────────────
 
-    def send(self, request_id: str, layer_names: list[str],
-             stacked_kv: torch.Tensor) -> None:
+    def send(
+        self,
+        request_id: str,
+        layer_names: list[str],
+        stacked_kv: torch.Tensor,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
         """Queue KV tensor for NCCL send (PUT_ASYNC: non-blocking)."""
         assert self.is_sender
         with torch.cuda.device(self.device):
@@ -126,8 +134,9 @@ class NcclTransport:
             ready_event = torch.cuda.Event()
             ready_event.record(torch.cuda.current_stream(self.device))
         with self._send_queue_cv:
-            self._send_queue.append(("tensor", request_id, layer_names, tensor,
-                                     ready_event))
+            self._send_queue.append(
+                ("tensor", request_id, layer_names, tensor, ready_event, meta)
+            )
             self._send_queue_cv.notify()
 
     def send_bundle(
@@ -137,6 +146,7 @@ class NcclTransport:
         meta: dict[str, Any],
         body_chunks: list[torch.Tensor],
         aux_tensors: list[torch.Tensor],
+        transfer_meta: dict[str, Any] | None = None,
     ) -> None:
         """Queue a compressed KV bundle for GPU-resident NCCL transfer."""
         assert self.is_sender
@@ -146,8 +156,10 @@ class NcclTransport:
             ready_event = torch.cuda.Event()
             ready_event.record(torch.cuda.current_stream(self.device))
         with self._send_queue_cv:
-            self._send_queue.append(("bundle", request_id, layer_names, meta,
-                                     body, aux, ready_event))
+            self._send_queue.append(
+                ("bundle", request_id, layer_names, meta, body, aux, ready_event,
+                 transfer_meta)
+            )
             self._send_queue_cv.notify()
 
     def wait_for_sent(self) -> None:
@@ -178,16 +190,26 @@ class NcclTransport:
                     if not self._send_queue and not self._send_inflight:
                         self._send_queue_cv.notify_all()
 
-    def _send_one(self, request_id: str, layer_names: list[str],
-                  tensor: torch.Tensor, ready_event: torch.cuda.Event) -> None:
-        meta = {
+    def _send_one(
+        self,
+        request_id: str,
+        layer_names: list[str],
+        tensor: torch.Tensor,
+        ready_event: torch.cuda.Event,
+        transfer_meta: dict[str, Any] | None = None,
+    ) -> None:
+        msg_meta = dict(transfer_meta or {})
+        msg_meta["send_ts_ns"] = time.time_ns()
+        header = {
             "cmd": "PUT",
             "request_id": request_id,
             "layer_names": layer_names,
             "shape": list(tensor.shape),
             "dtype": str(tensor.dtype).replace("torch.", ""),
         }
-        self._sock.send(msgpack.dumps(meta, use_bin_type=True))
+        if msg_meta:
+            header["meta"] = msg_meta
+        self._sock.send(msgpack.dumps(header, use_bin_type=True))
 
         ack = self._sock.recv()
         if ack != _NCCL_ACK_OK:
@@ -216,7 +238,10 @@ class NcclTransport:
         body_chunks: list[torch.Tensor],
         aux_tensors: list[torch.Tensor],
         ready_event: torch.cuda.Event,
+        transfer_meta: dict[str, Any] | None = None,
     ) -> None:
+        msg_transfer_meta = dict(transfer_meta or {})
+        msg_transfer_meta["send_ts_ns"] = time.time_ns()
         body_specs = [_tensor_spec(t) for t in body_chunks]
         aux_specs = [_tensor_spec(t) for t in aux_tensors]
         msg = {
@@ -227,6 +252,8 @@ class NcclTransport:
             "body_specs": body_specs,
             "aux_specs": aux_specs,
         }
+        if msg_transfer_meta:
+            msg["transport_meta"] = msg_transfer_meta
         self._sock.send(msgpack.dumps(msg, use_bin_type=True))
 
         ack = self._sock.recv()
@@ -259,7 +286,7 @@ class NcclTransport:
 
     def drain_received(
         self,
-    ) -> dict[str, list[tuple[list[str], Any]]]:
+    ) -> dict[str, list[tuple[list[str], Any, dict[str, Any] | None]]]:
         """Drain received payloads; each key maps to an ordered list (FIFO)."""
         assert not self.is_sender
         with self._lock:
@@ -273,7 +300,7 @@ class NcclTransport:
         not observable here; only consumer-side failures use this path."""
         with self._lock:
             self._received[request_id].append(
-                (FAILED_LAYER_NAMES, FAILED_PAYLOAD))
+                (FAILED_LAYER_NAMES, FAILED_PAYLOAD, None))
 
     def _listen_loop(self) -> None:
         """Handle INIT and PUT messages from the producer."""
@@ -316,6 +343,7 @@ class NcclTransport:
                         self._mark_failed(msg["request_id"])
                         continue
 
+                    recv_t0 = time.monotonic()
                     with torch.cuda.stream(self._recv_stream):
                         self.nccl.ncclRecv(
                             buffer_type(tensor.data_ptr()),
@@ -326,14 +354,17 @@ class NcclTransport:
                             cudaStream_t(self._recv_stream.cuda_stream),
                         )
                     self._recv_stream.synchronize()
+                    transfer_ms = (time.monotonic() - recv_t0) * 1e3
 
                     rid = msg["request_id"]
                     layer_names = msg["layer_names"]
                     logger.debug(
                         "[NcclTransport][RID][RECV] received rid=%s shape=%s",
                         rid, list(tensor.shape))
+                    put_meta = dict(msg.get("meta") or {})
+                    put_meta.setdefault("transfer_ms", transfer_ms)
                     with self._lock:
-                        self._received[rid].append((layer_names, tensor))
+                        self._received[rid].append((layer_names, tensor, put_meta))
 
                 elif cmd == "PUT_BUNDLE":
                     if comm is None:
@@ -359,6 +390,7 @@ class NcclTransport:
                         self._mark_failed(msg["request_id"])
                         continue
 
+                    recv_t0 = time.monotonic()
                     with torch.cuda.stream(self._recv_stream):
                         for tensor in body_tensors + aux_tensors:
                             if tensor.numel() == 0:
@@ -372,6 +404,7 @@ class NcclTransport:
                                 cudaStream_t(self._recv_stream.cuda_stream),
                             )
                     self._recv_stream.synchronize()
+                    transfer_ms = (time.monotonic() - recv_t0) * 1e3
 
                     rid = msg["request_id"]
                     layer_names = msg["layer_names"]
@@ -386,7 +419,11 @@ class NcclTransport:
                         "body=%d aux=%d",
                         rid, len(body_tensors), len(aux_tensors))
                     with self._lock:
-                        self._received[rid].append((layer_names, payload))
+                        transport_meta = dict(msg.get("transport_meta") or {})
+                        transport_meta.setdefault("transfer_ms", transfer_ms)
+                        self._received[rid].append(
+                            (layer_names, payload, transport_meta)
+                        )
 
             except Exception as e:
                 logger.error("[NcclTransport] listen_loop error: %s", e)

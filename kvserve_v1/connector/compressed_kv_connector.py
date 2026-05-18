@@ -77,6 +77,40 @@ def _write_compression_stats(
             stats_path, e)
 
 
+def _write_transfer_stats(
+    request_id: str,
+    transfer_id: str,
+    transfer_ms: float,
+    kv_bytes: int | None = None,
+    prefill_ms: float | None = None,
+    transfer_queue_ms: float | None = None,
+    transfer_total_ms: float | None = None,
+) -> None:
+    stats_path = os.environ.get("KVSERVE_TRANSFER_STATS_PATH")
+    if not stats_path or transfer_ms < 0:
+        return
+    row = {
+        "request_id": request_id,
+        "transfer_id": transfer_id,
+        "transfer_ms": transfer_ms,
+    }
+    if kv_bytes is not None and kv_bytes >= 0:
+        row["kv_bytes"] = int(kv_bytes)
+    if prefill_ms is not None and prefill_ms >= 0:
+        row["prefill_ms"] = float(prefill_ms)
+    if transfer_queue_ms is not None and transfer_queue_ms >= 0:
+        row["transfer_queue_ms"] = float(transfer_queue_ms)
+    if transfer_total_ms is not None and transfer_total_ms >= 0:
+        row["transfer_total_ms"] = float(transfer_total_ms)
+    try:
+        with open(stats_path, "a") as f:
+            f.write(json.dumps(row, sort_keys=True) + "\n")
+    except OSError as e:
+        logger.warning_once(
+            "[Connector] Failed to write transfer stats to %s: %s",
+            stats_path, e)
+
+
 def _max_nccl_chunk_bytes() -> int:
     raw = os.environ.get("KVSERVE_MAX_NCCL_CHUNK_BYTES")
     if not raw:
@@ -150,7 +184,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
 
         # WORKER side: received buffers keyed by transfer_id.
         self._worker_received_kv: dict[
-            str, deque[tuple[list[str], Any]]
+            str, deque[tuple[list[str], Any, dict[str, Any] | None]]
         ] = defaultdict(deque)
 
         # WORKER side: producer accumulates per-layer KV before sending
@@ -171,6 +205,13 @@ class CompressedKVConnector(KVConnectorBase_V1):
         # Built lazily on first use to avoid import overhead at init time.
         self._compressor: Optional[Any] = None
         self._compression_cfg = cfg.kv_connector_extra_config.get("compression")
+        raw_submit_ts = os.environ.get("KVSERVE_PREFILL_SUBMIT_TS_NS")
+        try:
+            self._prefill_submit_ts_ns: int | None = (
+                int(raw_submit_ts) if raw_submit_ts else None
+            )
+        except ValueError:
+            self._prefill_submit_ts_ns = None
 
         if role == KVConnectorRole.WORKER:
             from vllm.distributed.parallel_state import (
@@ -263,9 +304,52 @@ class CompressedKVConnector(KVConnectorBase_V1):
             if not self._worker_received_kv.get(transfer_id):
                 continue
 
-            layer_names, payload = self._worker_received_kv[transfer_id].popleft()
+            layer_names, payload, transfer_meta = (
+                self._worker_received_kv[transfer_id].popleft()
+            )
             if not self._worker_received_kv[transfer_id]:
                 self._worker_received_kv.pop(transfer_id, None)
+
+            transfer_ms = None
+            prefill_ms = None
+            transfer_queue_ms = None
+            transfer_total_ms = None
+            if isinstance(transfer_meta, dict):
+                raw_ms = transfer_meta.get("transfer_ms")
+                if raw_ms is not None:
+                    try:
+                        transfer_ms = float(raw_ms)
+                    except (TypeError, ValueError):
+                        transfer_ms = None
+                ready_ns = transfer_meta.get("kv_ready_ts_ns")
+                send_ns = transfer_meta.get("send_ts_ns")
+                submit_ns = transfer_meta.get("prefill_submit_ts_ns")
+                if isinstance(ready_ns, int) and isinstance(submit_ns, int):
+                    prefill_ms = max(0.0, (ready_ns - submit_ns) / 1e6)
+                if isinstance(ready_ns, int) and isinstance(send_ns, int):
+                    transfer_queue_ms = max(0.0, (send_ns - ready_ns) / 1e6)
+            if transfer_queue_ms is not None and transfer_ms is not None:
+                transfer_total_ms = transfer_queue_ms + transfer_ms
+            elif transfer_ms is not None:
+                transfer_total_ms = transfer_ms
+            kv_bytes = None
+            if isinstance(transfer_meta, dict):
+                raw_bytes = transfer_meta.get("kv_bytes")
+                if raw_bytes is not None:
+                    try:
+                        kv_bytes = int(raw_bytes)
+                    except (TypeError, ValueError):
+                        kv_bytes = None
+            if transfer_ms is not None:
+                _write_transfer_stats(
+                    rid,
+                    transfer_id,
+                    transfer_ms,
+                    kv_bytes,
+                    prefill_ms=prefill_ms,
+                    transfer_queue_ms=transfer_queue_ms,
+                    transfer_total_ms=transfer_total_ms,
+                )
 
             # Consumer-side failure marker (OOM, pre-INIT, etc.).
             if payload is None:
@@ -358,6 +442,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
             transfer_id = req_meta.transfer_id
             if rid not in self._layer_buffers:
                 continue
+            kv_ready_ts_ns = time.time_ns()
             layer_kv = self._layer_buffers.pop(rid)
             if not layer_kv:
                 continue
@@ -380,8 +465,17 @@ class CompressedKVConnector(KVConnectorBase_V1):
                         len(wire.aux_tensors), wire.nbytes,
                     )
                     self._transport.send_bundle(
-                        transfer_id, send_names, wire.meta, wire.body_chunks,
-                        wire.aux_tensors)
+                        transfer_id,
+                        send_names,
+                        wire.meta,
+                        wire.body_chunks,
+                        wire.aux_tensors,
+                        transfer_meta={
+                            "kv_ready_ts_ns": kv_ready_ts_ns,
+                            "prefill_submit_ts_ns": self._prefill_submit_ts_ns,
+                            "kv_bytes": int(wire.nbytes),
+                        },
+                    )
                     _write_compression_stats(
                         request_id=rid,
                         transfer_id=transfer_id,
@@ -405,7 +499,16 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 "[Connector][RID][SEND] sending raw rid=%s transfer_id=%s layers=%d shape=%s",
                 rid, transfer_id, len(layer_names), list(stacked.shape),
             )
-            self._transport.send(transfer_id, layer_names, stacked)
+            self._transport.send(
+                transfer_id,
+                layer_names,
+                stacked,
+                meta={
+                    "kv_ready_ts_ns": kv_ready_ts_ns,
+                    "prefill_submit_ts_ns": self._prefill_submit_ts_ns,
+                    "kv_bytes": int(stacked.numel() * stacked.element_size()),
+                },
+            )
             logger.debug("[Connector] Sent raw KV for %s (%d layers)",
                          rid, len(layer_names))
 

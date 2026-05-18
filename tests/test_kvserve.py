@@ -32,8 +32,8 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 MODEL_PATH = "/data/gyd/models/Qwen2.5-7B-Instruct"
-GPU_MEMORY_UTILIZATION = 0.6
-MAX_MODEL_LEN = 4096
+GPU_MEMORY_UTILIZATION = 0.8
+MAX_MODEL_LEN = 20000
 MAX_PROMPT_TOKENS = MAX_MODEL_LEN - 128
 DEFAULT_NUM_REQUESTS = 10
 DEFAULT_KV_PORT = 25010
@@ -252,6 +252,126 @@ class RequestResult:
     output_text: str
     output_tokens: int
     compression_mode: str
+    prefill_ms: float | None = None
+    decode_ms: float | None = None
+    transfer_ms: float | None = None
+    transfer_queue_ms: float | None = None
+    kv_bytes: int | None = None
+    job_ms: float | None = None
+
+
+def extract_decode_metrics(out: object) -> tuple[float | None, float | None, float | None]:
+    """Return (prefill_ms, decode_ms, job_ms) from vLLM RequestOutput.metrics."""
+    m = getattr(out, "metrics", None)
+    if m is None:
+        return None, None, None
+    s = float(getattr(m, "scheduled_ts", 0.0) or 0.0)
+    ft = float(getattr(m, "first_token_ts", 0.0) or 0.0)
+    last = float(getattr(m, "last_token_ts", 0.0) or 0.0)
+    q = float(getattr(m, "queued_ts", 0.0) or 0.0)
+
+    prefill_ms = max(0.0, (ft - s) * 1000.0) if (s > 0.0 and ft > 0.0) else None
+    decode_ms = max(0.0, (last - ft) * 1000.0) if (ft > 0.0 and last > 0.0) else None
+    if q > 0.0 and last > 0.0:
+        job_ms = max(0.0, (last - q) * 1000.0)
+    elif s > 0.0 and last > 0.0:
+        job_ms = max(0.0, (last - s) * 1000.0)
+    else:
+        job_ms = None
+    return prefill_ms, decode_ms, job_ms
+
+
+def get_output_transfer_id(out: object, fallback: str) -> str:
+    params = getattr(out, "kv_transfer_params", None)
+    if isinstance(params, dict) and params.get("transfer_id"):
+        return str(params["transfer_id"])
+    return fallback
+
+
+def _transfer_stats_path(output_dir: str, mode: str) -> str:
+    return os.path.join(output_dir, f"transfer_stats_{mode}.jsonl")
+
+
+def load_transfer_latencies(path: str | None) -> dict[str, dict[str, float | int | None]]:
+    if not path or not os.path.exists(path):
+        return {}
+    out: dict[str, dict[str, float | int | None]] = {}
+    with open(path, "r") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+                tid = str(row.get("transfer_id", ""))
+                ms = float(row.get("transfer_ms", -1.0))
+                raw_bytes = row.get("kv_bytes", None)
+                prefill_ms = row.get("prefill_ms", None)
+                transfer_total_ms = row.get("transfer_total_ms", None)
+                transfer_queue_ms = row.get("transfer_queue_ms", None)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if tid and ms >= 0.0:
+                kv_bytes = None
+                if raw_bytes is not None:
+                    try:
+                        kv_bytes = int(raw_bytes)
+                    except (TypeError, ValueError):
+                        kv_bytes = None
+                prefill_val = None
+                total_val = None
+                if prefill_ms is not None:
+                    try:
+                        prefill_val = float(prefill_ms)
+                    except (TypeError, ValueError):
+                        prefill_val = None
+                if transfer_total_ms is not None:
+                    try:
+                        total_val = float(transfer_total_ms)
+                    except (TypeError, ValueError):
+                        total_val = None
+                queue_val = None
+                if transfer_queue_ms is not None:
+                    try:
+                        queue_val = float(transfer_queue_ms)
+                    except (TypeError, ValueError):
+                        queue_val = None
+                out[tid] = {
+                    "transfer_ms": ms,
+                    "transfer_total_ms": total_val,
+                    "transfer_queue_ms": queue_val,
+                    "prefill_ms": prefill_val,
+                    "kv_bytes": kv_bytes,
+                }
+    return out
+
+
+def merge_request_timings(
+    phase_prefill_ms: float | None,
+    decode_ms: float | None,
+    phase_job_ms: float | None,
+    transfer: dict[str, float | int | None] | None,
+) -> tuple[float | None, float | None, float | None, int | None, float | None]:
+    prefill_ms = (
+        float(transfer["prefill_ms"])
+        if transfer and transfer.get("prefill_ms") is not None
+        else phase_prefill_ms
+    )
+    transfer_ms = None
+    transfer_queue_ms = None
+    kv_bytes = None
+    if transfer:
+        total = transfer.get("transfer_total_ms")
+        net = transfer.get("transfer_ms")
+        transfer_ms = float(total) if total is not None else (
+            float(net) if net is not None else None
+        )
+        queue = transfer.get("transfer_queue_ms")
+        transfer_queue_ms = float(queue) if queue is not None else None
+        raw_bytes = transfer.get("kv_bytes")
+        kv_bytes = int(raw_bytes) if raw_bytes is not None else None
+    if prefill_ms is not None and transfer_ms is not None and decode_ms is not None:
+        job_ms = prefill_ms + transfer_ms + decode_ms
+    else:
+        job_ms = phase_job_ms
+    return prefill_ms, transfer_ms, transfer_queue_ms, kv_bytes, job_ms
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +411,7 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(prefill_devices)
     if compression_stats_path:
         os.environ["KVSERVE_COMPRESSION_STATS_PATH"] = compression_stats_path
+    os.environ["KVSERVE_PREFILL_SUBMIT_TS_NS"] = str(time.time_ns())
     tp_size = len(prefill_devices)
 
     from vllm import LLM, SamplingParams
@@ -315,6 +436,7 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
         enable_prefix_caching=False,
         enforce_eager=True,
         enable_chunked_prefill=False,
+        disable_log_stats=False,
     )
     prefill_params = [
         SamplingParams(
@@ -330,9 +452,11 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
 
 def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
                compression_spec, prompts, max_tokens, mode_label,
-               print_outputs):
+               print_outputs, transfer_stats_path):
     decode_devices = _parse_gpu_list(str(decode_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(decode_devices)
+    if transfer_stats_path:
+        os.environ["KVSERVE_TRANSFER_STATS_PATH"] = transfer_stats_path
     tp_size = len(decode_devices)
 
     from vllm import LLM, SamplingParams
@@ -357,11 +481,11 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         enable_prefix_caching=False,
         enforce_eager=True,
         enable_chunked_prefill=False,
+        disable_log_stats=False,
     )
 
     print("[Decode] Engine ready, starting decode requests...", flush=True)
 
-    t_start = time.monotonic()
     decode_params = [
         SamplingParams(
             max_tokens=max_tokens,
@@ -371,24 +495,43 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         for i in range(len(prompts))
     ]
     outputs = llm.generate(prompts, sampling_params=decode_params)
-    total_ms = (time.monotonic() - t_start) * 1e3
+    transfer_latencies = load_transfer_latencies(transfer_stats_path)
 
     results = []
     for i, out in enumerate(outputs):
         text = out.outputs[0].text
+        phase_prefill_ms, decode_ms, phase_job_ms = extract_decode_metrics(out)
+        transfer_id = get_output_transfer_id(out, fallback=f"sim-{i}")
+        transfer = transfer_latencies.get(transfer_id)
+        prefill_ms, transfer_ms, transfer_queue_ms, kv_bytes, job_ms = (
+            merge_request_timings(phase_prefill_ms, decode_ms, phase_job_ms, transfer)
+        )
         r = RequestResult(
             request_id=i,
             prompt_chars=len(out.prompt),
             output_text=text,
             output_tokens=len(out.outputs[0].token_ids),
             compression_mode=mode_label,
+            prefill_ms=prefill_ms,
+            decode_ms=decode_ms,
+            transfer_ms=transfer_ms,
+            transfer_queue_ms=transfer_queue_ms,
+            kv_bytes=kv_bytes,
+            job_ms=job_ms,
         )
         results.append(r)
         if print_outputs:
             print(f"[Decode] [{i}] {out.prompt[:60]!r}... -> {text!r}", flush=True)
 
     result_queue.put(results)
-    print(f"[Decode] Done. total_wall={total_ms:.0f}ms", flush=True)
+    jobs = [r.job_ms for r in results if r.job_ms is not None]
+    avg_s = (
+        f"{sum(jobs) / len(jobs):.1f}" if jobs else "N/A (no vLLM metrics)")
+    print(
+        f"[Decode] Done. per_request_avg_job_ms={avg_s} "
+        f"(queued→last token; {len(jobs)}/{len(results)} with metrics)",
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +540,8 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
 
 _CSV_FIELDS = [
     "request_id", "compression_mode", "prompt_chars",
-    "output_tokens", "output_text",
+    "output_tokens", "prefill_ms", "decode_ms", "transfer_ms", "kv_bytes", "job_ms",
+    "output_text",
 ]
 
 
@@ -435,6 +579,13 @@ def load_compression_ratios(path: str | None) -> list[float]:
     return ratios
 
 
+def _avg(xs: list[float | None]) -> tuple[float, int] | None:
+    v = [float(x) for x in xs if x is not None]
+    if not v:
+        return None
+    return sum(v) / len(v), len(v)
+
+
 def print_summary(
     results: list,
     compression_ratios: list[float] | None = None,
@@ -455,6 +606,43 @@ def print_summary(
         print(f"  Avg compression ratio  : {avg_ratio:.2f}x")
     elif compression_enabled:
         print("  Avg compression ratio  : N/A")
+
+    p = _avg([r.prefill_ms for r in results])
+    d = _avg([r.decode_ms for r in results])
+    t = _avg([r.transfer_ms for r in results])
+    tq = _avg([r.transfer_queue_ms for r in results])
+    b = _avg([float(r.kv_bytes) if r.kv_bytes is not None else None for r in results])
+    j = _avg([r.job_ms for r in results])
+    print(f"  Avg prefill ms          : {p[0]:.1f} (n={p[1]})" if p else
+          "  Avg prefill ms          : N/A")
+    print(f"  Avg decode ms           : {d[0]:.1f} (n={d[1]})" if d else
+          "  Avg decode ms           : N/A")
+    print(f"  Avg transfer ms         : {t[0]:.1f} (n={t[1]})" if t else
+          "  Avg transfer ms         : N/A")
+    print(f"  Avg transfer queue ms   : {tq[0]:.1f} (n={tq[1]})" if tq else
+          "  Avg transfer queue ms   : N/A")
+    if b:
+        avg_kv_mb = b[0] / (1024.0 * 1024.0)
+        print(f"  Avg KV size MB          : {avg_kv_mb:.3f} (n={b[1]})")
+    else:
+        print("  Avg KV size MB          : N/A")
+    bw_pairs = []
+    for r in results:
+        if r.kv_bytes is None or r.transfer_ms is None:
+            continue
+        net_ms = r.transfer_ms - (r.transfer_queue_ms or 0.0)
+        if net_ms > 0:
+            bw_pairs.append((r.kv_bytes, net_ms))
+    if bw_pairs:
+        total_bytes = sum(int(x[0]) for x in bw_pairs)
+        total_s = sum(float(x[1]) for x in bw_pairs) / 1000.0
+        eq_bw_mb_s = (total_bytes / total_s) / (1024.0 * 1024.0)
+        print(f"  Eq bandwidth MB/s       : {eq_bw_mb_s:.2f} (n={len(bw_pairs)})")
+    else:
+        print("  Eq bandwidth MB/s       : N/A")
+    print(f"  Avg job ms              : {j[0]:.1f} (n={j[1]})" if j else
+          "  Avg job ms              : N/A")
+
     print(f"{'='*60}\n")
 
 
@@ -555,8 +743,11 @@ def main():
     print(f"{'='*60}\n")
 
     compression_stats_path = None
+    transfer_stats_path = _transfer_stats_path(args.output_dir, args.mode)
+    os.makedirs(args.output_dir, exist_ok=True)
+    if os.path.exists(transfer_stats_path):
+        os.remove(transfer_stats_path)
     if compression_spec is not None:
-        os.makedirs(args.output_dir, exist_ok=True)
         compression_stats_path = _compression_stats_path(args.output_dir, args.mode)
         if os.path.exists(compression_stats_path):
             os.remove(compression_stats_path)
@@ -574,7 +765,7 @@ def main():
         target=run_decode,
         args=(args.model, decode_gpus, args.kv_port, result_queue,
               args.gpu_mem_util, compression_spec, prompts, args.max_tokens,
-              args.mode, args.print_outputs),
+              args.mode, args.print_outputs, transfer_stats_path),
     )
 
     # Start decode first so the consumer transport is ready to receive as
