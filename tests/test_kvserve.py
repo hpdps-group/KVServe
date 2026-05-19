@@ -411,7 +411,6 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(prefill_devices)
     if compression_stats_path:
         os.environ["KVSERVE_COMPRESSION_STATS_PATH"] = compression_stats_path
-    os.environ["KVSERVE_PREFILL_SUBMIT_TS_NS"] = str(time.time_ns())
     tp_size = len(prefill_devices)
 
     from vllm import LLM, SamplingParams
@@ -438,11 +437,17 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
         enable_chunked_prefill=False,
         disable_log_stats=False,
     )
+    submit_ts_ns = time.time_ns()
     prefill_params = [
         SamplingParams(
             max_tokens=1,
             temperature=0,
-            extra_args={"kv_transfer_params": {"transfer_id": f"sim-{i}"}},
+            extra_args={
+                "kv_transfer_params": {
+                    "transfer_id": f"sim-{i}",
+                    "prefill_submit_ts_ns": submit_ts_ns,
+                }
+            },
         )
         for i in range(len(prompts))
     ]

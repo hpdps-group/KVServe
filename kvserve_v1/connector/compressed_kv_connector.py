@@ -178,6 +178,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
         # request_id -> transfer_id (shared between P/D). If not provided by
         # upstream router, falls back to request_id.
         self._request_transfer_ids: dict[str, str] = {}
+        self._request_prefill_submit_ts_ns: dict[str, int] = {}
         # SCHEDULER side: producer chunked-prefill accumulation state.
         # req_id -> (accumulated block_ids, full prompt_token_ids)
         self.chunked_prefill: dict[str, tuple[list[int], list[int]]] = {}
@@ -205,14 +206,6 @@ class CompressedKVConnector(KVConnectorBase_V1):
         # Built lazily on first use to avoid import overhead at init time.
         self._compressor: Optional[Any] = None
         self._compression_cfg = cfg.kv_connector_extra_config.get("compression")
-        raw_submit_ts = os.environ.get("KVSERVE_PREFILL_SUBMIT_TS_NS")
-        try:
-            self._prefill_submit_ts_ns: int | None = (
-                int(raw_submit_ts) if raw_submit_ts else None
-            )
-        except ValueError:
-            self._prefill_submit_ts_ns = None
-
         if role == KVConnectorRole.WORKER:
             from vllm.distributed.parallel_state import (
                 get_tensor_model_parallel_rank,
@@ -472,7 +465,9 @@ class CompressedKVConnector(KVConnectorBase_V1):
                         wire.aux_tensors,
                         transfer_meta={
                             "kv_ready_ts_ns": kv_ready_ts_ns,
-                            "prefill_submit_ts_ns": self._prefill_submit_ts_ns,
+                            "prefill_submit_ts_ns": (
+                                self._request_prefill_submit_ts_ns.get(rid)
+                            ),
                             "kv_bytes": int(wire.nbytes),
                         },
                     )
@@ -505,7 +500,9 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 stacked,
                 meta={
                     "kv_ready_ts_ns": kv_ready_ts_ns,
-                    "prefill_submit_ts_ns": self._prefill_submit_ts_ns,
+                    "prefill_submit_ts_ns": (
+                        self._request_prefill_submit_ts_ns.get(rid)
+                    ),
                     "kv_bytes": int(stacked.numel() * stacked.element_size()),
                 },
             )
@@ -636,6 +633,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
     ) -> tuple[bool, Optional[dict[str, Any]]]:
         self.chunked_prefill.pop(request.request_id, None)
         self._request_transfer_ids.pop(request.request_id, None)
+        self._request_prefill_submit_ts_ns.pop(request.request_id, None)
         if not self.is_producer:
             self._requests_need_load.pop(request.request_id, None)
         return False, None
@@ -678,6 +676,9 @@ class CompressedKVConnector(KVConnectorBase_V1):
             if params and params.get("transfer_id"):
                 self._request_transfer_ids[request_id] = str(
                     params["transfer_id"])
+                submit_ts = params.get("prefill_submit_ts_ns")
+                if isinstance(submit_ts, int):
+                    self._request_prefill_submit_ts_ns[request_id] = submit_ts
             else:
                 logger.warning_once(
                     "Missing transfer_id in kv_transfer_params from router; "

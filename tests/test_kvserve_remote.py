@@ -73,7 +73,6 @@ def run_prefill(args, prompts: list[str], compression_spec: object) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(devices)
     if args.compression_stats_path:
         os.environ["KVSERVE_COMPRESSION_STATS_PATH"] = args.compression_stats_path
-    os.environ["KVSERVE_PREFILL_SUBMIT_TS_NS"] = str(time.time_ns())
 
     from vllm import LLM, SamplingParams
     from vllm.config import KVTransferConfig
@@ -100,13 +99,15 @@ def run_prefill(args, prompts: list[str], compression_spec: object) -> None:
         disable_log_stats=False,
     )
     try:
+        submit_ts_ns = time.time_ns()
         params = [
             SamplingParams(
                 max_tokens=1,
                 temperature=0,
                 extra_args={
                     "kv_transfer_params": {
-                        "transfer_id": f"{args.transfer_prefix}-{i}"
+                        "transfer_id": f"{args.transfer_prefix}-{i}",
+                        "prefill_submit_ts_ns": submit_ts_ns,
                     }
                 },
             )
