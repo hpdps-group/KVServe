@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "pipeline": ["quantizer", "codec"],
+  "quantizer_config": {
+    "impl": "tilelang_fused",
+    "model_name": "Llama-3.1-8B-Instruct",
+    "quant_type": "minmax",
+    "base_seed": 3237919422,
+    "hybrid_ratio": 0.9,
+    "high_key_max_value": 6,
+    "high_value_max_value": 6,
+    "low_key_max_value": 6,
+    "low_value_max_value": 4,
+    "axis_key": "channel",
+    "axis_value": "token",
+    "split_type": "head"
+  },
+  "codec_config": {
+    "codec_type": "nvcomp",
+    "nvcomp_algorithm": "ANS",
+    "data_type": "|u1"
+  },
+  "min_compress_size": 1024
+}

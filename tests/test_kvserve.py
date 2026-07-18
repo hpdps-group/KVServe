@@ -7,6 +7,8 @@ USAGE
 =====
   python tests/test_kvserve.py                           # no compression, built-in prompts
   python tests/test_kvserve.py --mode custom             # custom compression config
+  python tests/test_kvserve.py --mode tilelang_lc        # TileLang fused quantizer + LC codec
+  python tests/test_kvserve.py --mode custom --compression-config configs/compression/fused_top_lc.json
   python tests/test_kvserve.py --mode default            # built-in default config
   python tests/test_kvserve.py --mode controller         # online adaptive (needs --library-path)
       --library-path /path/to/profiles.json
@@ -31,7 +33,7 @@ from typing import Optional
 # Configuration constants
 # ---------------------------------------------------------------------------
 
-MODEL_PATH = "/data/gyd/models/Qwen2.5-7B-Instruct"
+MODEL_PATH = "/data/models/Qwen2.5-7B-Instruct"
 GPU_MEMORY_UTILIZATION = 0.6
 MAX_MODEL_LEN = 4096
 MAX_PROMPT_TOKENS = MAX_MODEL_LEN - 128
@@ -39,6 +41,10 @@ DEFAULT_NUM_REQUESTS = 10
 DEFAULT_KV_PORT = 25010
 OUTPUT_DIR = "./sim_outputs"
 MAX_PROMPT_CHARS = 40_000
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_DEFAULT_LC_META = os.path.join(
+    _REPO_ROOT, "build", "lc_runtime", "lc_runtime_meta.json"
+)
 
 CUSTOM_COMPRESSION_CFG = {
     "enabled": True,
@@ -58,6 +64,31 @@ CUSTOM_COMPRESSION_CFG = {
         "codec_type": "nvcomp",
         "nvcomp_algorithm": "ANS",
         "data_type": "|u1",
+    },
+    "min_compress_size": 0,
+}
+
+TILELANG_LC_COMPRESSION_CFG = {
+    "enabled": True,
+    "pipeline": ["quantizer", "codec"],
+    "quantizer_config": {
+        "impl": "tilelang_fused",
+        "model_name": "Qwen2.5-7B-Instruct",
+        "quant_type": "minmax",
+        "base_seed": 3237919422,
+        "hybrid_ratio": 0.5,
+        "high_key_max_value": 12,
+        "high_value_max_value": 8,
+        "low_key_max_value": 6,
+        "low_value_max_value": 4,
+        "axis_key": "channel",
+        "axis_value": "token",
+        "split_type": "head",
+    },
+    "codec_config": {
+        "codec_type": "lc",
+        "lc_algorithm": "TUPL8_1 BIT_8 RZE_2",
+        "lc_meta_path": _DEFAULT_LC_META,
     },
     "min_compress_size": 0,
 }
@@ -173,10 +204,67 @@ def load_lmeval_prompts(task_name: str, num_requests: int,
     return prompts
 
 
+def load_jsonl_prompts(data_path: str, num_requests: int,
+                       max_prompt_chars: int = MAX_PROMPT_CHARS) -> list:
+    """Load prompts from a LongBench-style JSON/JSONL file."""
+    path = os.path.abspath(data_path)
+    records: list[dict] = []
+    with open(path, "r", encoding="utf-8") as f:
+        if path.endswith(".jsonl"):
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        else:
+            obj = json.load(f)
+            if isinstance(obj, list):
+                records = obj
+            elif isinstance(obj, dict):
+                for key in ("data", "examples", "records"):
+                    if isinstance(obj.get(key), list):
+                        records = obj[key]
+                        break
+    if not records:
+        raise RuntimeError(f"No records loaded from {path}")
+
+    prompts: list[str] = []
+    for record in records:
+        if len(prompts) >= num_requests:
+            break
+        if "prompt" in record and str(record["prompt"]).strip():
+            prompt = str(record["prompt"])
+        else:
+            context = str(record.get("context", record.get("passage", "")))
+            question = str(record.get("input", record.get("question", "")))
+            # Local LongBench cache often already embeds the instruction template.
+            if context.lstrip().startswith("Answer the question"):
+                prompt = context
+            else:
+                prompt = (
+                    "Answer the question based on the given context.\n\n"
+                    f"Context:\n{context}\n\n"
+                    f"Question: {question}\n"
+                    "Answer:"
+                )
+        if max_prompt_chars > 0 and len(prompt) > max_prompt_chars:
+            prompt = prompt[:max_prompt_chars]
+        if prompt.strip():
+            prompts.append(prompt)
+    if not prompts:
+        raise RuntimeError(f"No usable prompts in {path}")
+    return prompts
+
+
 def build_prompts(lmeval_task: Optional[str], num_requests: int,
                   offline: bool = True,
-                  max_prompt_chars: int = MAX_PROMPT_CHARS) -> list:
-    if lmeval_task:
+                  max_prompt_chars: int = MAX_PROMPT_CHARS,
+                  data_path: Optional[str] = None,
+                  max_prompt_tokens: int = MAX_PROMPT_TOKENS) -> list:
+    if data_path:
+        prompts = load_jsonl_prompts(
+            data_path, num_requests, max_prompt_chars=max_prompt_chars)
+        print(f"[Prompts] Loaded {len(prompts)} docs from {data_path}")
+    elif lmeval_task:
         prompts = load_lmeval_prompts(
             lmeval_task,
             num_requests,
@@ -193,7 +281,7 @@ def build_prompts(lmeval_task: Optional[str], num_requests: int,
             f"[Prompts] chars min/avg/max = "
             f"{min(lengths)}/{sum(lengths)/len(lengths):.1f}/{max(lengths)}"
         )
-    prompts = _truncate_prompts_by_tokens(prompts, MAX_PROMPT_TOKENS)
+    prompts = _truncate_prompts_by_tokens(prompts, max_prompt_tokens)
     return prompts
 
 
@@ -259,6 +347,9 @@ class RequestResult:
 # ---------------------------------------------------------------------------
 
 def make_compression_spec(args) -> object:
+    if getattr(args, "compression_config", None):
+        with open(args.compression_config, "r", encoding="utf-8") as f:
+            return json.load(f)
     if args.mode == "default":
         return "default"
     if args.mode == "controller":
@@ -278,6 +369,8 @@ def make_compression_spec(args) -> object:
         }
     if args.mode == "custom":
         return CUSTOM_COMPRESSION_CFG
+    if args.mode == "tilelang_lc":
+        return TILELANG_LC_COMPRESSION_CFG
     return None  # none
 
 
@@ -286,7 +379,8 @@ def make_compression_spec(args) -> object:
 # ---------------------------------------------------------------------------
 
 def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
-                compression_spec, prompts, compression_stats_path):
+                compression_spec, prompts, compression_stats_path,
+                max_model_len=MAX_MODEL_LEN):
     prefill_devices = _parse_gpu_list(str(prefill_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(prefill_devices)
     if compression_stats_path:
@@ -310,7 +404,7 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
         model=model,
         kv_transfer_config=kv_cfg,
         gpu_memory_utilization=gpu_mem_util,
-        max_model_len=MAX_MODEL_LEN,
+        max_model_len=max_model_len,
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         enforce_eager=True,
@@ -330,7 +424,7 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
 
 def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
                compression_spec, prompts, max_tokens, mode_label,
-               print_outputs):
+               print_outputs, max_model_len=MAX_MODEL_LEN):
     decode_devices = _parse_gpu_list(str(decode_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(decode_devices)
     tp_size = len(decode_devices)
@@ -352,7 +446,7 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         model=model,
         kv_transfer_config=kv_cfg,
         gpu_memory_utilization=gpu_mem_util,
-        max_model_len=MAX_MODEL_LEN,
+        max_model_len=max_model_len,
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         enforce_eager=True,
@@ -472,12 +566,17 @@ def main():
     parser.add_argument("--lmeval-task", default=None,
                         help="lm-eval task name (e.g. longbench_qasper, gsm8k). "
                              "Omit to use built-in long prompts.")
+    parser.add_argument("--data-path", default=None,
+                        help="JSON/JSONL prompt file (e.g. LongBench hotpotqa.jsonl). "
+                             "Overrides --lmeval-task when set.")
     parser.add_argument("--online", action="store_true", default=False,
                         help="Allow HuggingFace Hub access when loading lm-eval datasets. "
                              "By default datasets are loaded from local cache only.")
     parser.add_argument("--num-requests", type=int, default=DEFAULT_NUM_REQUESTS)
     parser.add_argument("--max-tokens", type=int, default=30,
                         help="Max new tokens per decode request")
+    parser.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN,
+                        help="vLLM max_model_len / prompt token cap")
 
     # Hardware
     parser.add_argument("--model", default=MODEL_PATH)
@@ -494,9 +593,11 @@ def main():
 
     # Compression mode
     parser.add_argument("--mode",
-                        choices=["none", "default", "custom", "controller"],
+                        choices=["none", "default", "custom", "tilelang_lc", "controller"],
                         default="none",
                         help="Compression mode")
+    parser.add_argument("--compression-config", default=None,
+                        help="JSON compression config path (overrides --mode profile)")
     parser.add_argument("--print-outputs", action="store_true", default=False,
                         help="Print per-request decoded text. Disabled by default.")
 
@@ -531,20 +632,31 @@ def main():
             f"prefill_tp={prefill_tp}, decode_tp={decode_tp}")
 
     compression_spec = make_compression_spec(args)
+    max_prompt_tokens = max(1, int(args.max_model_len) - 128)
     prompts = build_prompts(
         args.lmeval_task,
         args.num_requests,
         offline=not args.online,
         max_prompt_chars=MAX_PROMPT_CHARS,
+        data_path=args.data_path,
+        max_prompt_tokens=max_prompt_tokens,
     )
 
     print(f"\n{'='*60}")
     print("PD SEPARATION TEST")
     print(f"{'='*60}")
     print(f"  Model        : {args.model}")
-    src = ("lm-eval:" + args.lmeval_task) if args.lmeval_task else "built-in"
+    if args.data_path:
+        src = "jsonl:" + args.data_path
+    elif args.lmeval_task:
+        src = "lm-eval:" + args.lmeval_task
+    else:
+        src = "built-in"
     print(f"  Prompts      : {len(prompts)} ({src})")
     print(f"  Compression  : {args.mode}")
+    if args.compression_config:
+        print(f"  Config       : {args.compression_config}")
+    print(f"  max_model_len: {args.max_model_len}")
     print(f"  Prefill GPUs : {prefill_gpus} (TP={prefill_tp})")
     print(f"  Decode GPUs  : {decode_gpus} (TP={decode_tp})")
     kv_ports = (
@@ -557,9 +669,14 @@ def main():
     compression_stats_path = None
     if compression_spec is not None:
         os.makedirs(args.output_dir, exist_ok=True)
-        compression_stats_path = _compression_stats_path(args.output_dir, args.mode)
+        mode_label = args.mode
+        if args.compression_config:
+            mode_label = os.path.splitext(os.path.basename(args.compression_config))[0]
+        compression_stats_path = _compression_stats_path(args.output_dir, mode_label)
         if os.path.exists(compression_stats_path):
             os.remove(compression_stats_path)
+    else:
+        mode_label = args.mode
 
     mp.set_start_method("spawn", force=True)
     manager = mp.Manager()
@@ -568,13 +685,14 @@ def main():
     p_prefill = mp.Process(
         target=run_prefill,
         args=(args.model, prefill_gpus, args.kv_port, args.gpu_mem_util,
-              compression_spec, prompts, compression_stats_path),
+              compression_spec, prompts, compression_stats_path,
+              args.max_model_len),
     )
     p_decode = mp.Process(
         target=run_decode,
         args=(args.model, decode_gpus, args.kv_port, result_queue,
               args.gpu_mem_util, compression_spec, prompts, args.max_tokens,
-              args.mode, args.print_outputs),
+              mode_label, args.print_outputs, args.max_model_len),
     )
 
     # Start decode first so the consumer transport is ready to receive as
@@ -583,23 +701,37 @@ def main():
     p_prefill.start()
 
     results = None
-    deadline = time.time() + 600
+    # LongBench-scale prompts need a much larger wall budget than short builtins.
+    deadline = time.time() + max(600, int(args.num_requests) * 120)
     while time.time() < deadline:
-        if not result_queue.empty():
-            results = result_queue.get()
+        try:
+            results = result_queue.get(timeout=1.0)
             break
-        if not p_decode.is_alive() and result_queue.empty():
-            print("[Main] Decode process exited unexpectedly.", flush=True)
-            break
-        time.sleep(1)
+        except Exception:
+            if not p_decode.is_alive():
+                # Drain once more in case the item arrived as the child exited.
+                try:
+                    results = result_queue.get_nowait()
+                except Exception:
+                    print("[Main] Decode process exited before returning results.",
+                          flush=True)
+                break
 
-    p_prefill.terminate()
-    p_decode.terminate()
-    p_prefill.join(timeout=10)
-    p_decode.join(timeout=10)
+    for proc in (p_prefill, p_decode):
+        if proc.is_alive():
+            proc.terminate()
+        proc.join(timeout=10)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=5)
+
+    try:
+        manager.shutdown()
+    except Exception:
+        pass
 
     if not results:
-        print("FAIL: no results received")
+        print("FAIL: no results received", flush=True)
         os._exit(1)
 
     print_summary(
@@ -608,7 +740,8 @@ def main():
         compression_enabled=compression_spec is not None,
     )
 
-    csv_name = f"results_{args.mode}_{args.lmeval_task or 'builtin'}.csv"
+    src_tag = "hotpotqa" if args.data_path else (args.lmeval_task or "builtin")
+    csv_name = f"results_{mode_label}_{src_tag}.csv"
     save_csv(results, os.path.join(args.output_dir, csv_name))
 
     n, expected = len(results), len(prompts)

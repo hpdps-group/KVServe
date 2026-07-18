@@ -53,8 +53,10 @@ def build_wire(
             "body_mode": "manager_chunks",
         }
         body_chunks = [chunk.contiguous() for chunk in compressed.chunks]
+        wire_aux_tensors = _coalesce_aux_tensors(meta, aux_tensors)
         _assert_no_tensor(meta)
-        return CompressedWire(meta=meta, body_chunks=body_chunks, aux_tensors=aux_tensors)
+        return CompressedWire(
+            meta=meta, body_chunks=body_chunks, aux_tensors=wire_aux_tensors)
 
     if compressed.compressed_tensor is None:
         raise ValueError("Non-chunked CompressedKVData is missing compressed_tensor")
@@ -78,8 +80,10 @@ def build_wire(
         "body_mode": body_mode,
         "body_spec": body_spec,
     }
+    wire_aux_tensors = _coalesce_aux_tensors(meta, aux_tensors)
     _assert_no_tensor(meta)
-    return CompressedWire(meta=meta, body_chunks=body_chunks, aux_tensors=aux_tensors)
+    return CompressedWire(
+        meta=meta, body_chunks=body_chunks, aux_tensors=wire_aux_tensors)
 
 
 def restore_from_wire(wire: CompressedWire) -> CompressedKVData:
@@ -90,7 +94,8 @@ def restore_from_wire(wire: CompressedWire) -> CompressedKVData:
     in here.
     """
     meta = wire.meta
-    aux_tensors = wire.aux_tensors
+    aux_tensors = _expand_aux_tensors(
+        wire.aux_tensors, meta.get("aux_layout"))
     is_chunked = bool(meta["is_chunked"])
 
     inner_meta = _unpack_metadata(meta.get("metadata"), aux_tensors)
@@ -178,6 +183,75 @@ def _unpack_qparams(obj: Any, aux_tensors: list[torch.Tensor]) -> Any:
     if isinstance(obj, list):
         return [_unpack_qparams(v, aux_tensors) for v in obj]
     return obj
+
+
+def _coalesce_aux_tensors(
+    meta: dict[str, Any],
+    aux_tensors: list[torch.Tensor],
+) -> list[torch.Tensor]:
+    """Pack metadata tensors into one byte tensor to reduce NCCL ops.
+
+    TileLang metadata can contain hundreds of small tensors. Sending each as a
+    separate NCCL message is fragile on the Socket path and adds high control
+    overhead, so the wire format keeps the existing placeholder indexes but
+    stores their bytes in one auxiliary tensor plus a compact layout table.
+    """
+    if len(aux_tensors) <= 1:
+        return aux_tensors
+
+    byte_chunks: list[torch.Tensor] = []
+    layout: list[dict[str, Any]] = []
+    offset = 0
+    device = aux_tensors[0].device
+
+    for tensor in aux_tensors:
+        tensor = tensor.contiguous()
+        itemsize = tensor.element_size()
+        padding = (-offset) % itemsize
+        if padding:
+            byte_chunks.append(torch.zeros(padding, dtype=torch.uint8, device=device))
+            offset += padding
+
+        tensor_bytes = tensor.view(torch.uint8).flatten()
+        nbytes = tensor_bytes.numel()
+        layout.append({
+            "storage": 0,
+            "offset": offset,
+            "nbytes": nbytes,
+            "shape": list(tensor.shape),
+            "dtype": str(tensor.dtype).replace("torch.", ""),
+        })
+        byte_chunks.append(tensor_bytes)
+        offset += nbytes
+
+    meta["aux_layout"] = {
+        "mode": "coalesced_bytes",
+        "tensors": layout,
+    }
+    return [torch.cat(byte_chunks, dim=0).contiguous()]
+
+
+def _expand_aux_tensors(
+    wire_aux_tensors: list[torch.Tensor],
+    aux_layout: Any,
+) -> list[torch.Tensor]:
+    if not aux_layout:
+        return wire_aux_tensors
+    if aux_layout.get("mode") != "coalesced_bytes":
+        raise ValueError(f"Unknown aux_layout mode: {aux_layout.get('mode')}")
+    if not wire_aux_tensors:
+        return []
+
+    storage = wire_aux_tensors[0].contiguous().view(torch.uint8).flatten()
+    restored: list[torch.Tensor] = []
+    for spec in aux_layout.get("tensors", []):
+        if int(spec.get("storage", 0)) != 0:
+            raise ValueError("Only single-storage aux_layout is supported")
+        start = int(spec["offset"])
+        end = start + int(spec["nbytes"])
+        dtype = getattr(torch, spec["dtype"])
+        restored.append(storage[start:end].view(dtype).reshape(spec["shape"]))
+    return restored
 
 
 def _split_tensor_bytes(tensor: torch.Tensor, max_chunk_bytes: int) -> list[torch.Tensor]:

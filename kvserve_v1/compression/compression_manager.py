@@ -6,10 +6,18 @@ Coordinates transformer, quantizer, and codec compression components
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 import copy
+import os
 import torch
 
 from kvserve_v1.compression.components import Transformer, Quantizer, Codec
 from kvserve_v1.utils.logger import log_info, log_error, log_warning, log_debug
+
+# Codec packing layout (wire byte order seen by LC/nvCOMP):
+#   "permuted" – [L, 2, heads, blocks, block_size, dim]  (default; preserves LC ratio)
+#   "native"   – [L, 2, blocks, block_size, heads, dim]  (faster; can hurt LC ratio)
+# Fast path still quantizes into a native staging buffer, then does ONE bulk
+# permute into the codec layout (instead of per-layer permute+copy_).
+_CODEC_LAYOUT_ENV = "KVSERVE_CODEC_LAYOUT"
 
 
 DEFAULT_COMPRESSION_CONFIG: Dict[str, Any] = {
@@ -125,6 +133,70 @@ class CompressionManager:
         if self.codec is not None:
             self.codec.update_params(**self.config.codec_config)
 
+    @staticmethod
+    def _codec_layout() -> str:
+        # Default permuted: LC compression ratio matches the original pipeline.
+        layout = os.environ.get(_CODEC_LAYOUT_ENV, "permuted").strip().lower()
+        return layout if layout in ("native", "permuted") else "permuted"
+
+    def _quantizer_supports_out(self) -> bool:
+        return bool(getattr(self.quantizer, "supports_out_buffer", False))
+
+    @staticmethod
+    def _native_to_permuted(native: torch.Tensor) -> torch.Tensor:
+        """[L,2,B,S,H,D] -> [L,2,H,B,S,D] (one bulk transpose)."""
+        return native.permute(0, 1, 4, 2, 3, 5).contiguous()
+
+    @staticmethod
+    def _permuted_to_native(permuted: torch.Tensor) -> torch.Tensor:
+        """[L,2,H,B,S,D] -> [L,2,B,S,H,D] (one bulk transpose)."""
+        return permuted.permute(0, 1, 3, 4, 2, 5).contiguous()
+
+    def _pack_layer_into_codec_buffer(
+        self,
+        processed_data: torch.Tensor,
+        dest: torch.Tensor,
+        layout: str,
+    ) -> None:
+        if layout == "permuted":
+            dest.copy_(processed_data.permute(0, 3, 1, 2, 4))
+        else:
+            dest.copy_(processed_data)
+
+    def _layer_from_codec_buffer(
+        self,
+        codec_layer: torch.Tensor,
+        layout: str,
+    ) -> torch.Tensor:
+        """Map one codec-packed layer to quantizer layout [2, B, S, H, D]."""
+        if layout == "permuted":
+            # [2, H, B, S, D] -> [2, B, S, H, D]
+            return codec_layer.permute(0, 2, 3, 1, 4)
+        return codec_layer
+
+    def _quantize_layers_direct(
+        self,
+        layers_data: torch.Tensor,
+        start_layer_id: int,
+        quantization_params_list: list,
+    ) -> torch.Tensor:
+        """Quantize into a native uint8 buffer via out= (TileLang fast path)."""
+        native_buf = torch.empty(
+            layers_data.shape,
+            dtype=torch.uint8,
+            device=layers_data.device,
+        )
+        for i in range(layers_data.shape[0]):
+            layer_id = start_layer_id + i
+            _, qparams = self.quantizer.quantize(
+                layer_id,
+                layers_data[i],
+                out=native_buf[i],
+                **self.config.quantizer_config,
+            )
+            quantization_params_list.append(qparams)
+        return native_buf
+
     def compress_all_layers(
         self,
         all_layers_data: Any,  # torch.Tensor [num_layers, 2, num_blocks, block_size, num_heads, head_size]
@@ -180,65 +252,82 @@ class CompressionManager:
             }
 
             quantization_params_list = []
-            
-            # Process first layer to determine output shape and dtype
-            first_layer = all_layers_data[0]
-            processed_data = first_layer
-            
-            if "transformer" in self.config.pipeline:
-                processed_data = self.transformer.transform(0, processed_data, **self.config.transformer_config)
-                compression_metadata["transformer_applied"] = True
-            
-            if "quantizer" in self.config.pipeline:
-                processed_data, qparams = self.quantizer.quantize(
-                    0, processed_data, **self.config.quantizer_config
-                )
-                quantization_params_list.append(qparams)
-                compression_metadata["quantization_applied"] = True
-            
-            # 2. Determine target permuted shape
-            layer_permuted_shape = (
-                processed_data.shape[0], # 2
-                processed_data.shape[3], # heads
-                processed_data.shape[1], # blocks
-                processed_data.shape[2], # block_size
-                processed_data.shape[4]  # head_size
-            )
-            
-            # 3. Allocate ONE contiguous buffer for all layers
-            full_shape = (num_layers,) + layer_permuted_shape
-            processed_buffer = torch.empty(
-                full_shape, 
-                dtype=processed_data.dtype, 
-                device=processed_data.device
+            layout = self._codec_layout()
+            compression_metadata["codec_layout"] = layout
+            use_direct_quant = (
+                "quantizer" in self.config.pipeline
+                and "transformer" not in self.config.pipeline
+                and self._quantizer_supports_out()
             )
 
-            # 4. Write first layer directly into buffer
-            processed_buffer[0].copy_(processed_data.permute(0, 3, 1, 2, 4))
-            
-            # Clean up first layer intermediates immediately
-            del processed_data
-            
-            # 5. Process remaining layers and write directly
-            for layer_id in range(1, num_layers):
-                current_data = all_layers_data[layer_id]
-                
+            if use_direct_quant:
+                # Quantize into native staging, then optional ONE bulk permute for
+                # LC-friendly permuted wire order (keeps ratio, avoids 32x permute).
+                compression_metadata["quantization_applied"] = True
+                native_buf = self._quantize_layers_direct(
+                    all_layers_data, 0, quantization_params_list
+                )
+                if layout == "native":
+                    processed_buffer = native_buf
+                else:
+                    processed_buffer = self._native_to_permuted(native_buf)
+                    del native_buf
+            else:
+                # Process first layer to determine output shape and dtype
+                processed_data = all_layers_data[0]
+
                 if "transformer" in self.config.pipeline:
-                    current_data = self.transformer.transform(
-                        layer_id, current_data, **self.config.transformer_config
+                    processed_data = self.transformer.transform(
+                        0, processed_data, **self.config.transformer_config
                     )
-                
+                    compression_metadata["transformer_applied"] = True
+
                 if "quantizer" in self.config.pipeline:
-                    current_data, qparams = self.quantizer.quantize(
-                        layer_id, current_data, **self.config.quantizer_config
+                    processed_data, qparams = self.quantizer.quantize(
+                        0, processed_data, **self.config.quantizer_config
                     )
                     quantization_params_list.append(qparams)
-                
-                # Direct copy to pre-allocated buffer (no stacking)
-                processed_buffer[layer_id].copy_(current_data.permute(0, 3, 1, 2, 4))
-                
-                # Release loop variable immediately
-                del current_data
+                    compression_metadata["quantization_applied"] = True
+
+                if layout == "permuted":
+                    layer_pack_shape = (
+                        processed_data.shape[0],  # 2
+                        processed_data.shape[3],  # heads
+                        processed_data.shape[1],  # blocks
+                        processed_data.shape[2],  # block_size
+                        processed_data.shape[4],  # head_size
+                    )
+                else:
+                    layer_pack_shape = tuple(processed_data.shape)
+
+                processed_buffer = torch.empty(
+                    (num_layers,) + layer_pack_shape,
+                    dtype=processed_data.dtype,
+                    device=processed_data.device,
+                )
+                self._pack_layer_into_codec_buffer(
+                    processed_data, processed_buffer[0], layout
+                )
+                del processed_data
+
+                for layer_id in range(1, num_layers):
+                    current_data = all_layers_data[layer_id]
+
+                    if "transformer" in self.config.pipeline:
+                        current_data = self.transformer.transform(
+                            layer_id, current_data, **self.config.transformer_config
+                        )
+
+                    if "quantizer" in self.config.pipeline:
+                        current_data, qparams = self.quantizer.quantize(
+                            layer_id, current_data, **self.config.quantizer_config
+                        )
+                        quantization_params_list.append(qparams)
+
+                    self._pack_layer_into_codec_buffer(
+                        current_data, processed_buffer[layer_id], layout
+                    )
+                    del current_data
 
             if "quantizer" in self.config.pipeline:
                 compression_metadata["quantization_params"] = quantization_params_list
@@ -318,68 +407,86 @@ class CompressionManager:
                 }
                 
                 quantization_params_list = []
-                
-                # Process first layer to determine output shape
-                first_layer = chunk_data[0]
-                processed_data = first_layer
-                
-                if "transformer" in self.config.pipeline:
-                    processed_data = self.transformer.transform(start_layer, processed_data, **self.config.transformer_config)
-                    chunk_meta["transformer_applied"] = True
-                
-                if "quantizer" in self.config.pipeline:
-                    processed_data, qparams = self.quantizer.quantize(
-                        start_layer, processed_data, **self.config.quantizer_config
-                    )
-                    quantization_params_list.append(qparams)
+                layout = self._codec_layout()
+                chunk_meta["codec_layout"] = layout
+                use_direct_quant = (
+                    "quantizer" in self.config.pipeline
+                    and "transformer" not in self.config.pipeline
+                    and self._quantizer_supports_out()
+                )
+
+                if use_direct_quant:
                     chunk_meta["quantization_applied"] = True
-                
-                # Determine permuted shape
-                layer_permuted_shape = (
-                    processed_data.shape[0], # 2
-                    processed_data.shape[3], # heads
-                    processed_data.shape[1], # blocks
-                    processed_data.shape[2], # block_size
-                    processed_data.shape[4]  # head_size
-                )
-                
-                # Allocate buffer for this chunk only
-                chunk_buffer_shape = (chunk_num_layers,) + layer_permuted_shape
-                processed_buffer = torch.empty(
-                    chunk_buffer_shape,
-                    dtype=processed_data.dtype,
-                    device=processed_data.device
-                )
-                
-                # Write first layer
-                processed_buffer[0].copy_(processed_data.permute(0, 3, 1, 2, 4))
-                del processed_data
-                
-                # Process remaining layers in this chunk
-                for i in range(1, chunk_num_layers):
-                    layer_id = start_layer + i
-                    current_data = chunk_data[i]
-                    
+                    native_buf = self._quantize_layers_direct(
+                        chunk_data, start_layer, quantization_params_list
+                    )
+                    if layout == "native":
+                        processed_buffer = native_buf
+                    else:
+                        processed_buffer = self._native_to_permuted(native_buf)
+                        del native_buf
+                else:
+                    processed_data = chunk_data[0]
+
                     if "transformer" in self.config.pipeline:
-                        current_data = self.transformer.transform(
-                            layer_id, current_data, **self.config.transformer_config
+                        processed_data = self.transformer.transform(
+                            start_layer, processed_data, **self.config.transformer_config
                         )
-                    
+                        chunk_meta["transformer_applied"] = True
+
                     if "quantizer" in self.config.pipeline:
-                        current_data, qparams = self.quantizer.quantize(
-                            layer_id, current_data, **self.config.quantizer_config
+                        processed_data, qparams = self.quantizer.quantize(
+                            start_layer, processed_data, **self.config.quantizer_config
                         )
                         quantization_params_list.append(qparams)
-                    
-                    processed_buffer[i].copy_(current_data.permute(0, 3, 1, 2, 4))
-                    del current_data
-                
-                # Release chunk_data after processing
+                        chunk_meta["quantization_applied"] = True
+
+                    if layout == "permuted":
+                        layer_pack_shape = (
+                            processed_data.shape[0],
+                            processed_data.shape[3],
+                            processed_data.shape[1],
+                            processed_data.shape[2],
+                            processed_data.shape[4],
+                        )
+                    else:
+                        layer_pack_shape = tuple(processed_data.shape)
+
+                    processed_buffer = torch.empty(
+                        (chunk_num_layers,) + layer_pack_shape,
+                        dtype=processed_data.dtype,
+                        device=processed_data.device,
+                    )
+                    self._pack_layer_into_codec_buffer(
+                        processed_data, processed_buffer[0], layout
+                    )
+                    del processed_data
+
+                    for i in range(1, chunk_num_layers):
+                        layer_id = start_layer + i
+                        current_data = chunk_data[i]
+
+                        if "transformer" in self.config.pipeline:
+                            current_data = self.transformer.transform(
+                                layer_id, current_data, **self.config.transformer_config
+                            )
+
+                        if "quantizer" in self.config.pipeline:
+                            current_data, qparams = self.quantizer.quantize(
+                                layer_id, current_data, **self.config.quantizer_config
+                            )
+                            quantization_params_list.append(qparams)
+
+                        self._pack_layer_into_codec_buffer(
+                            current_data, processed_buffer[i], layout
+                        )
+                        del current_data
+
                 del chunk_data
-                
+
                 if "quantizer" in self.config.pipeline:
                     chunk_meta["quantization_params"] = quantization_params_list
-                
+
                 chunk_meta["codec_shape"] = list(processed_buffer.shape)
                 chunk_meta["codec_dtype"] = str(processed_buffer.dtype).replace("torch.", "")
                 
@@ -462,7 +569,8 @@ class CompressionManager:
                 return None
             
             # Step 1: Codec decompression (all layers together)
-            # Returns tensor of shape [layers, 2, heads, blocks, block_size, head_size]
+            # native:   [L, 2, blocks, block_size, heads, dim]
+            # permuted: [L, 2, heads, blocks, block_size, dim]
             current_data = self._handle_codec_decompression(
                 compressed_data.compressed_tensor, compressed_data, self.config.pipeline, 0
             )
@@ -470,14 +578,13 @@ class CompressionManager:
             if not isinstance(current_data, torch.Tensor):
                 log_error(f"[CompressionManager] Expected tensor after codec decode, got {type(current_data)}")
                 return None
-            
-            target_layer_shape = (
-                current_data.shape[1], # 2
-                current_data.shape[3], # blocks
-                current_data.shape[4], # block_size
-                current_data.shape[2], # heads
-                current_data.shape[5], # head_size
-            )
+
+            layout = compressed_data.metadata.get("codec_layout", "permuted")
+            # Bulk inverse-permute once so the dequant loop sees native layout.
+            if layout == "permuted":
+                current_data = self._permuted_to_native(current_data)
+                layout = "native"
+            target_layer_shape = tuple(current_data.shape[1:])
             full_target_shape = (num_layers,) + target_layer_shape
             
             # Determine dtype (restore original dtype)
@@ -491,7 +598,9 @@ class CompressionManager:
             
             # Step 2 & 3: Dequantize and Transform loop (write directly to buffer)
             for layer_id in range(num_layers):
-                current_layer_data = current_data[layer_id].permute(0, 2, 3, 1, 4)
+                current_layer_data = self._layer_from_codec_buffer(
+                    current_data[layer_id], layout
+                )
                 
                 # Batch dequantization
                 if "quantizer" in self.config.pipeline:
@@ -582,15 +691,12 @@ class CompressionManager:
                 if not isinstance(current_data, torch.Tensor):
                     log_error(f"[CompressionManager] Chunk {chunk_idx} decode failed")
                     return None
-                
-                # Determine target shape for this chunk
-                target_layer_shape = (
-                    current_data.shape[1], # 2
-                    current_data.shape[3], # blocks
-                    current_data.shape[4], # block_size
-                    current_data.shape[2], # heads
-                    current_data.shape[5], # head_size
-                )
+
+                layout = chunk_meta.get("codec_layout", "permuted")
+                if layout == "permuted":
+                    current_data = self._permuted_to_native(current_data)
+                    layout = "native"
+                target_layer_shape = tuple(current_data.shape[1:])
                 chunk_target_shape = (chunk_num_layers,) + target_layer_shape
                 
                 # Determine dtype
@@ -606,17 +712,24 @@ class CompressionManager:
                 # Dequantize and transform each layer in this chunk
                 for i in range(chunk_num_layers):
                     layer_id = start_layer + i
-                    current_layer_data = current_data[i].permute(0, 2, 3, 1, 4)
+                    current_layer_data = self._layer_from_codec_buffer(
+                        current_data[i], layout
+                    )
                     
                     if "quantizer" in self.config.pipeline:
-                        quantization_params = chunk_meta.get("quantization_params", [])[i]
-                        if quantization_params:
-                            current_layer_data = self.quantizer.dequantize(
-                                layer_id,
-                                current_layer_data,
-                                quantization_params,
-                                **self.config.quantizer_config
+                        qparams_list = chunk_meta.get("quantization_params", [])
+                        if i >= len(qparams_list) or qparams_list[i] is None:
+                            log_error(
+                                "[CompressionManager] Missing quantization params "
+                                f"for chunk layer index {i}"
                             )
+                            return None
+                        current_layer_data = self.quantizer.dequantize(
+                            layer_id,
+                            current_layer_data,
+                            qparams_list[i],
+                            **self.config.quantizer_config
+                        )
                     
                     if "transformer" in self.config.pipeline:
                         current_layer_data = self.transformer.inverse(

@@ -15,3 +15,7 @@ kvserve_v1/transport/file_transport.py
 
 logs/
 *.log
+
+datasets/
+*.pkl
+*.so

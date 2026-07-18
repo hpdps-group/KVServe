@@ -2,14 +2,12 @@
 Codec compression components for KV cache compression
 """
 
-# Placeholder for future codec compression implementations
-# Components should inherit from kvserve_v1.compression.components.Codec
 from kvserve_v1.compression.codec.nvcomp_func import nvCOMPCodec
 from kvserve_v1.compression.codec.kvserve_codec import KVServeCodec
+from kvserve_v1.compression.codec.lc_codec import LCCodec
 
 __all__ = [
     "nvCOMPCodec",
     "KVServeCodec",
+    "LCCodec",
 ]
-
-

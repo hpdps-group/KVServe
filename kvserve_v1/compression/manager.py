@@ -147,18 +147,37 @@ class KVCompressionAdapter:
             min_compress_size=cfg_dict.get("min_compress_size", 0),
         )
 
+    @staticmethod
+    def _is_tilelang_fused(cfg_dict: dict) -> bool:
+        if cfg_dict.get("impl") == "tilelang_fused":
+            return True
+        if cfg_dict.get("quantizer_impl") == "tilelang_fused":
+            return True
+        qc = cfg_dict.get("quantizer_config") or {}
+        return qc.get("impl") == "tilelang_fused"
+
     def _build_manager(self, cfg_dict: dict) -> "CompressionManager":
         from kvserve_v1.compression.compression_manager import CompressionManager
-        pipeline = cfg_dict.get("pipeline", [])
+        cfg_dict = dict(cfg_dict)
+        pipeline = list(cfg_dict.get("pipeline", []))
         transformer_cls = None
         quantizer_cls = None
         codec_cls = None
+        use_tilelang = self._is_tilelang_fused(cfg_dict)
+        # TileLang fused path already includes Hadamard; drop a redundant transformer.
+        if use_tilelang and "transformer" in pipeline:
+            pipeline = [p for p in pipeline if p != "transformer"]
+            cfg_dict["pipeline"] = pipeline
         if "transformer" in pipeline:
             from kvserve_v1.compression.transformer.kvserve_transformer import KVServeTransformer
             transformer_cls = KVServeTransformer
         if "quantizer" in pipeline:
-            from kvserve_v1.compression.quantizer.kvserve_quantizer import KVServeQuantizer
-            quantizer_cls = KVServeQuantizer
+            if use_tilelang:
+                from kvserve_v1.compression.quantizer.tilelang_quantizer import TileLangFusedQuantizer
+                quantizer_cls = TileLangFusedQuantizer
+            else:
+                from kvserve_v1.compression.quantizer.kvserve_quantizer import KVServeQuantizer
+                quantizer_cls = KVServeQuantizer
         if "codec" in pipeline:
             from kvserve_v1.compression.codec import KVServeCodec
             codec_cls = KVServeCodec

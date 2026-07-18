@@ -7,7 +7,12 @@ import torch
 from kvserve_v1.compression.components import Codec
 from kvserve_v1.compression.codec.nvcomp_func import nvCOMPCodec
 
-_KVSERVE_CODEC_KEYS = frozenset({"codec_type", "nvcomp_algorithm"})
+_KVSERVE_CODEC_KEYS = frozenset({
+    "codec_type",
+    "nvcomp_algorithm",
+    "lc_algorithm",
+    "lc_meta_path",
+})
 
 
 def _nvcomp_codec_kwargs(kwargs: dict) -> dict:
@@ -29,14 +34,18 @@ class KVServeCodec(Codec):
         
         Args:
             **kwargs: Configuration parameters including:
-                codec_type: Type of codec, "nvcomp" (default: "nvcomp")
+                codec_type: Type of codec, "nvcomp" or "lc" (default: "nvcomp")
                 nvcomp_algorithm: Compression algorithm, one of:
                     "ANS", "Bitcomp", "Cascaded", "Deflate", "GDeflate", "LZ4", "Zstd"
                     (default: "ANS")
+                lc_algorithm / lc_meta_path: LC runtime settings when codec_type="lc"
         """
         # Update parameters from kwargs
         self.codec_type = kwargs.get("codec_type", "nvcomp")
         self.nvcomp_algorithm = kwargs.get("nvcomp_algorithm", "ANS")
+        self.lc_algorithm = kwargs.get("lc_algorithm")
+        self.lc_meta_path = kwargs.get("lc_meta_path")
+        self._codec_kwargs = dict(kwargs)
 
         self.codec = None
 
@@ -50,8 +59,13 @@ class KVServeCodec(Codec):
                     algorithm=self.nvcomp_algorithm,
                     **_nvcomp_codec_kwargs(kwargs),
                 )
+            case "lc":
+                from kvserve_v1.compression.codec.lc_codec import LCCodec
+                self.codec = LCCodec(**kwargs)
             case _:
-                raise ValueError(f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp']")
+                raise ValueError(
+                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+                )
 
     def validate(
         self,
@@ -62,38 +76,66 @@ class KVServeCodec(Codec):
         Raises:
             AssertionError: If codec_type or nvcomp_algorithm is invalid
         """
-        assert self.codec_type in ["nvcomp"], \
-            f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp']"
-        assert self.nvcomp_algorithm in ["ANS", "Bitcomp", "Cascaded", "Deflate", "GDeflate", "LZ4", "Zstd"], \
-            f"Invalid nvcomp's algorithm: {self.nvcomp_algorithm}"
+        assert self.codec_type in ["nvcomp", "lc"], \
+            f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+        if self.codec_type == "nvcomp":
+            assert self.nvcomp_algorithm in ["ANS", "Bitcomp", "Cascaded", "Deflate", "GDeflate", "LZ4", "Zstd"], \
+                f"Invalid nvcomp's algorithm: {self.nvcomp_algorithm}"
 
     def update_params(
         self,
         **kwargs
     ) -> None:
         """
-        Update codec parameters dynamically, used in encode() to update the codec parameters for every request
-        
-        Args:
-            **kwargs: Parameters to update
+        Update codec parameters dynamically.
+
+        For LC, reuse the existing LCCodec instance when type/algorithm/meta are
+        unchanged so the encode staging buffer pool survives across requests.
         """
-        # Update the parameters with the new values
+        prev_type = self.codec_type
+        prev_nv = self.nvcomp_algorithm
+        prev_lc_algo = self.lc_algorithm
+        prev_lc_meta = self.lc_meta_path
+
+        self._codec_kwargs.update(kwargs)
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if "lc_algorithm" in kwargs:
+            self.lc_algorithm = kwargs["lc_algorithm"]
+        if "lc_meta_path" in kwargs:
+            self.lc_meta_path = kwargs["lc_meta_path"]
 
-        # Validate codec parameters
         self.validate()
 
-        # Reinitialize codec with updated parameters
         match self.codec_type:
             case "nvcomp":
+                if (
+                    self.codec is not None
+                    and prev_type == "nvcomp"
+                    and self.nvcomp_algorithm == prev_nv
+                ):
+                    return
                 self.codec = nvCOMPCodec(
                     algorithm=self.nvcomp_algorithm,
-                    **_nvcomp_codec_kwargs(kwargs),
+                    **_nvcomp_codec_kwargs(self._codec_kwargs),
                 )
+            case "lc":
+                if (
+                    self.codec is not None
+                    and prev_type == "lc"
+                    and self.lc_algorithm == prev_lc_algo
+                    and self.lc_meta_path == prev_lc_meta
+                ):
+                    # Propagate any LC-specific knobs without rebuilding.
+                    self.codec.update_params(**kwargs)
+                    return
+                from kvserve_v1.compression.codec.lc_codec import LCCodec
+                self.codec = LCCodec(**self._codec_kwargs)
             case _:
-                raise ValueError(f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp']")
+                raise ValueError(
+                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+                )
 
     def encode(
         self,
