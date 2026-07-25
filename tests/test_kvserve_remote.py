@@ -315,7 +315,7 @@ def _write_benchmark_summary(
     output_tokens: int,
     process_total_s: float,
     compression_ratios: list[float] | None = None,
-    producer_compute_s: float | None = None,
+    producer_generate_s: float | None = None,
     ib_bytes: int | None = None,
 ) -> str:
     requests = args.num_requests
@@ -347,10 +347,11 @@ def _write_benchmark_summary(
         "tilelang_jit_excluded": args.warmup_requests > 0,
         "timestamp_unix_s": time.time(),
     }
-    if producer_compute_s is not None:
-        summary["producer_compute_s"] = producer_compute_s
-        summary["producer_drain_and_decode_s"] = max(
-            0.0, measured_s - producer_compute_s)
+    if producer_generate_s is not None:
+        # Includes connector work performed synchronously inside the engine.
+        summary["producer_generate_s"] = producer_generate_s
+        summary["post_generate_wait_s"] = max(
+            0.0, measured_s - producer_generate_s)
     if ib_bytes is not None:
         summary["ib"] = {
             "device": args.ib_device,
@@ -473,7 +474,7 @@ def run_prefill(
                 args.ib_device, args.ib_port, "prefill")
             measured_t0 = time.perf_counter()
             outputs = llm.wait_for_completion(use_tqdm=False)
-            producer_compute_s = time.perf_counter() - measured_t0
+            producer_generate_s = time.perf_counter() - measured_t0
             done = _recv_barrier_line(barrier)
             if not done.startswith("DONE "):
                 raise RuntimeError(f"Unexpected completion token: {done!r}")
@@ -498,7 +499,7 @@ def run_prefill(
             output_tokens=output_tokens,
             process_total_s=time.perf_counter() - process_t0,
             compression_ratios=ratios,
-            producer_compute_s=producer_compute_s,
+            producer_generate_s=producer_generate_s,
             ib_bytes=(
                 ib_after - ib_before
                 if ib_before is not None and ib_after is not None
