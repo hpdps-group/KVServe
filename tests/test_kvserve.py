@@ -20,6 +20,8 @@ CONFIGURATION
 Edit the constants block below to change model, GPU memory, ports, etc.
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import json
@@ -378,10 +380,22 @@ def make_compression_spec(args) -> object:
 # Worker processes
 # ---------------------------------------------------------------------------
 
-def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
-                compression_spec, prompts, compression_stats_path,
-                max_model_len=MAX_MODEL_LEN,
-                kv_buffer_size=1_000_000_000):
+def run_prefill(
+    model,
+    prefill_gpus,
+    kv_port,
+    gpu_mem_util,
+    compression_spec,
+    prompts,
+    warmup_prompts,
+    start_barrier,
+    compression_stats_path,
+    max_model_len=MAX_MODEL_LEN,
+    kv_buffer_size=1_000_000_000,
+    max_num_batched_tokens=8192,
+    max_num_seqs=4,
+    barrier_timeout_s=600.0,
+):
     prefill_devices = _parse_gpu_list(str(prefill_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(prefill_devices)
     if compression_stats_path:
@@ -407,27 +421,66 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
         kv_transfer_config=kv_cfg,
         gpu_memory_utilization=gpu_mem_util,
         max_model_len=max_model_len,
+        max_num_batched_tokens=max_num_batched_tokens,
+        max_num_seqs=max_num_seqs,
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         enforce_eager=True,
         enable_chunked_prefill=False,
     )
-    prefill_params = [
-        SamplingParams(
-            max_tokens=1,
-            temperature=0,
-            extra_args={"kv_transfer_params": {"transfer_id": f"sim-{i}"}},
+    def make_params(items, prefix):
+        return [
+            SamplingParams(
+                max_tokens=1,
+                temperature=0,
+                extra_args={
+                    "kv_transfer_params": {
+                        "transfer_id": f"{prefix}-{i}",
+                    }
+                },
+            )
+            for i in range(len(items))
+        ]
+
+    if warmup_prompts:
+        llm.generate(
+            warmup_prompts,
+            sampling_params=make_params(warmup_prompts, "warmup"),
         )
-        for i in range(len(prompts))
-    ]
+        # Report only measured-request compression ratios.
+        if compression_stats_path and os.path.exists(compression_stats_path):
+            os.remove(compression_stats_path)
+        print(
+            f"[Prefill] Warmup complete ({len(warmup_prompts)} requests).",
+            flush=True,
+        )
+
+    print("[Prefill] Waiting at measurement barrier.", flush=True)
+    start_barrier.wait(timeout=barrier_timeout_s)
+    prefill_params = make_params(prompts, "sim")
     llm.generate(prompts, sampling_params=prefill_params)
     print("[Prefill] Done - KV sent.", flush=True)
 
 
-def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
-               compression_spec, prompts, max_tokens, mode_label,
-               print_outputs, max_model_len=MAX_MODEL_LEN,
-               kv_buffer_size=1_000_000_000):
+def run_decode(
+    model,
+    decode_gpus,
+    kv_port,
+    result_queue,
+    gpu_mem_util,
+    compression_spec,
+    prompts,
+    warmup_prompts,
+    start_barrier,
+    max_tokens,
+    mode_label,
+    print_outputs,
+    max_model_len=MAX_MODEL_LEN,
+    kv_buffer_size=1_000_000_000,
+    max_num_batched_tokens=8192,
+    max_num_seqs=4,
+    barrier_timeout_s=600.0,
+):
     decode_devices = _parse_gpu_list(str(decode_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(decode_devices)
     tp_size = len(decode_devices)
@@ -451,25 +504,45 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         kv_transfer_config=kv_cfg,
         gpu_memory_utilization=gpu_mem_util,
         max_model_len=max_model_len,
+        max_num_batched_tokens=max_num_batched_tokens,
+        max_num_seqs=max_num_seqs,
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         enforce_eager=True,
         enable_chunked_prefill=False,
     )
 
-    print("[Decode] Engine ready, starting decode requests...", flush=True)
+    def make_params(items, prefix):
+        return [
+            SamplingParams(
+                max_tokens=max_tokens,
+                temperature=0,
+                extra_args={
+                    "kv_transfer_params": {
+                        "transfer_id": f"{prefix}-{i}",
+                    }
+                },
+            )
+            for i in range(len(items))
+        ]
 
-    t_start = time.monotonic()
-    decode_params = [
-        SamplingParams(
-            max_tokens=max_tokens,
-            temperature=0,
-            extra_args={"kv_transfer_params": {"transfer_id": f"sim-{i}"}},
+    if warmup_prompts:
+        llm.generate(
+            warmup_prompts,
+            sampling_params=make_params(warmup_prompts, "warmup"),
         )
-        for i in range(len(prompts))
-    ]
+        print(
+            f"[Decode] Warmup complete ({len(warmup_prompts)} requests).",
+            flush=True,
+        )
+
+    print("[Decode] Waiting at measurement barrier.", flush=True)
+    start_barrier.wait(timeout=barrier_timeout_s)
+    print("[Decode] Starting measured requests.", flush=True)
+    t_start = time.monotonic()
+    decode_params = make_params(prompts, "sim")
     outputs = llm.generate(prompts, sampling_params=decode_params)
-    total_ms = (time.monotonic() - t_start) * 1e3
+    measured_s = time.monotonic() - t_start
 
     results = []
     for i, out in enumerate(outputs):
@@ -485,8 +558,20 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         if print_outputs:
             print(f"[Decode] [{i}] {out.prompt[:60]!r}... -> {text!r}", flush=True)
 
-    result_queue.put(results)
-    print(f"[Decode] Done. total_wall={total_ms:.0f}ms", flush=True)
+    prompt_tokens = sum(
+        len(getattr(out, "prompt_token_ids", None) or []) for out in outputs
+    )
+    output_tokens = sum(
+        len(out.outputs[0].token_ids) for out in outputs if out.outputs
+    )
+    result_queue.put({
+        "results": results,
+        "measured_s": measured_s,
+        "prompt_tokens": prompt_tokens,
+        "output_tokens": output_tokens,
+    })
+    print(f"[Decode] Done. measured_wall={measured_s * 1e3:.0f}ms",
+          flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +620,9 @@ def load_compression_ratios(path: str | None) -> list[float]:
 
 def print_summary(
     results: list,
+    measured_s: float,
+    prompt_tokens: int,
+    output_tokens: int,
     compression_ratios: list[float] | None = None,
     compression_enabled: bool = False,
 ) -> None:
@@ -546,6 +634,14 @@ def print_summary(
     print(f"\n{'='*60}")
     print(f"SUMMARY  (n={n}, mode={results[0].compression_mode})")
     print(f"{'='*60}")
+    print(f"  Measured job time      : {measured_s:.3f} s")
+    print(f"  Request throughput     : {n / measured_s:.3f} req/s")
+    print(f"  Prompt throughput      : {prompt_tokens / measured_s:.1f} token/s")
+    print(f"  Output throughput      : {output_tokens / measured_s:.1f} token/s")
+    print(
+        "  Total throughput       : "
+        f"{(prompt_tokens + output_tokens) / measured_s:.1f} token/s"
+    )
     print(f"  Avg output tokens/req  : {avg_tok:.1f}")
     print(f"  Successful requests    : {success}/{n}")
     if compression_enabled and compression_ratios:
@@ -561,6 +657,7 @@ def print_summary(
 # ---------------------------------------------------------------------------
 
 def main():
+    global MODEL_PATH
     parser = argparse.ArgumentParser(
         description="PD separation test (real NCCL transport)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -577,10 +674,28 @@ def main():
                         help="Allow HuggingFace Hub access when loading lm-eval datasets. "
                              "By default datasets are loaded from local cache only.")
     parser.add_argument("--num-requests", type=int, default=DEFAULT_NUM_REQUESTS)
+    parser.add_argument(
+        "--warmup-requests",
+        type=int,
+        default=2,
+        help="Requests run before the measurement barrier to exclude JIT/init.",
+    )
     parser.add_argument("--max-tokens", type=int, default=30,
                         help="Max new tokens per decode request")
     parser.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN,
                         help="vLLM max_model_len / prompt token cap")
+    parser.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=8192,
+        help="Maximum tokens scheduled in one vLLM iteration.",
+    )
+    parser.add_argument(
+        "--max-num-seqs",
+        type=int,
+        default=4,
+        help="Maximum sequences scheduled concurrently.",
+    )
 
     # Hardware
     parser.add_argument("--model", default=MODEL_PATH)
@@ -599,6 +714,23 @@ def main():
         type=float,
         default=1.0,
         help="Per-channel decode staging capacity enforced by receiver credits.",
+    )
+    parser.add_argument(
+        "--async-send",
+        action="store_true",
+        help="Overlap bounded KV sends with later prefill scheduler iterations.",
+    )
+    parser.add_argument(
+        "--max-inflight-gib",
+        type=float,
+        default=1.0,
+        help="Producer send-queue high-water mark when --async-send is enabled.",
+    )
+    parser.add_argument(
+        "--barrier-timeout-s",
+        type=float,
+        default=600.0,
+        help="Timeout for the post-warmup prefill/decode measurement barrier.",
     )
 
     # Compression mode
@@ -631,8 +763,27 @@ def main():
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
 
     args = parser.parse_args()
+    if args.num_requests <= 0:
+        parser.error("--num-requests must be positive")
+    if args.warmup_requests < 0:
+        parser.error("--warmup-requests cannot be negative")
+    if args.max_num_batched_tokens <= 0:
+        parser.error("--max-num-batched-tokens must be positive")
+    if args.max_num_seqs <= 0:
+        parser.error("--max-num-seqs must be positive")
     if args.kv_buffer_gib <= 0:
         parser.error("--kv-buffer-gib must be positive")
+    if args.max_inflight_gib <= 0:
+        parser.error("--max-inflight-gib must be positive")
+    if args.barrier_timeout_s <= 0:
+        parser.error("--barrier-timeout-s must be positive")
+    if not 0 < args.gpu_mem_util <= 1:
+        parser.error("--gpu-mem-util must be in (0, 1]")
+
+    os.environ["KVSERVE_ASYNC_SEND"] = "1" if args.async_send else "0"
+    os.environ["KVSERVE_MAX_INFLIGHT_BYTES"] = str(
+        int(args.max_inflight_gib * 1024**3)
+    )
 
     prefill_gpus = args.prefill_gpus or str(args.prefill_gpu)
     decode_gpus = args.decode_gpus or str(args.decode_gpu)
@@ -643,6 +794,7 @@ def main():
             "CompressedKVConnector currently supports homogeneous TP only: "
             f"prefill_tp={prefill_tp}, decode_tp={decode_tp}")
 
+    MODEL_PATH = args.model
     compression_spec = make_compression_spec(args)
     max_prompt_tokens = max(1, int(args.max_model_len) - 128)
     prompts = build_prompts(
@@ -653,6 +805,9 @@ def main():
         data_path=args.data_path,
         max_prompt_tokens=max_prompt_tokens,
     )
+    warmup_prompts = [
+        prompts[i % len(prompts)] for i in range(args.warmup_requests)
+    ]
 
     print(f"\n{'='*60}")
     print("PD SEPARATION TEST")
@@ -665,10 +820,15 @@ def main():
     else:
         src = "built-in"
     print(f"  Prompts      : {len(prompts)} ({src})")
+    print(f"  Warmup       : {len(warmup_prompts)} requests (excluded)")
     print(f"  Compression  : {args.mode}")
     if args.compression_config:
         print(f"  Config       : {args.compression_config}")
     print(f"  max_model_len: {args.max_model_len}")
+    print(f"  Batch tokens : {args.max_num_batched_tokens}")
+    print(f"  Max sequences: {args.max_num_seqs}")
+    print(f"  Async send   : {args.async_send}")
+    print(f"  Send HWM     : {args.max_inflight_gib:.2f} GiB/channel")
     print(f"  Prefill GPUs : {prefill_gpus} (TP={prefill_tp})")
     print(f"  Decode GPUs  : {decode_gpus} (TP={decode_tp})")
     kv_ports = (
@@ -691,22 +851,60 @@ def main():
     else:
         mode_label = args.mode
 
+    os.makedirs(args.output_dir, exist_ok=True)
+    transport_stats_path = os.path.join(
+        args.output_dir,
+        f"transport_stats_{mode_label}.jsonl",
+    )
+    if os.path.exists(transport_stats_path):
+        os.remove(transport_stats_path)
+    os.environ["KVSERVE_TRANSPORT_STATS_PATH"] = transport_stats_path
+
     mp.set_start_method("spawn", force=True)
     manager = mp.Manager()
     result_queue = manager.Queue()
+    start_barrier = mp.Barrier(2)
 
     p_prefill = mp.Process(
         target=run_prefill,
-        args=(args.model, prefill_gpus, args.kv_port, args.gpu_mem_util,
-              compression_spec, prompts, compression_stats_path,
-              args.max_model_len, int(args.kv_buffer_gib * 1024**3)),
+        kwargs={
+            "model": args.model,
+            "prefill_gpus": prefill_gpus,
+            "kv_port": args.kv_port,
+            "gpu_mem_util": args.gpu_mem_util,
+            "compression_spec": compression_spec,
+            "prompts": prompts,
+            "warmup_prompts": warmup_prompts,
+            "start_barrier": start_barrier,
+            "compression_stats_path": compression_stats_path,
+            "max_model_len": args.max_model_len,
+            "kv_buffer_size": int(args.kv_buffer_gib * 1024**3),
+            "max_num_batched_tokens": args.max_num_batched_tokens,
+            "max_num_seqs": args.max_num_seqs,
+            "barrier_timeout_s": args.barrier_timeout_s,
+        },
     )
     p_decode = mp.Process(
         target=run_decode,
-        args=(args.model, decode_gpus, args.kv_port, result_queue,
-              args.gpu_mem_util, compression_spec, prompts, args.max_tokens,
-              mode_label, args.print_outputs, args.max_model_len,
-              int(args.kv_buffer_gib * 1024**3)),
+        kwargs={
+            "model": args.model,
+            "decode_gpus": decode_gpus,
+            "kv_port": args.kv_port,
+            "result_queue": result_queue,
+            "gpu_mem_util": args.gpu_mem_util,
+            "compression_spec": compression_spec,
+            "prompts": prompts,
+            "warmup_prompts": warmup_prompts,
+            "start_barrier": start_barrier,
+            "max_tokens": args.max_tokens,
+            "mode_label": mode_label,
+            "print_outputs": args.print_outputs,
+            "max_model_len": args.max_model_len,
+            "kv_buffer_size": int(args.kv_buffer_gib * 1024**3),
+            "max_num_batched_tokens": args.max_num_batched_tokens,
+            "max_num_seqs": args.max_num_seqs,
+            "barrier_timeout_s": args.barrier_timeout_s,
+        },
     )
 
     # Start decode first so the consumer transport is ready to receive as
@@ -714,18 +912,18 @@ def main():
     p_decode.start()
     p_prefill.start()
 
-    results = None
+    benchmark_result = None
     # LongBench-scale prompts need a much larger wall budget than short builtins.
     deadline = time.time() + max(600, int(args.num_requests) * 120)
     while time.time() < deadline:
         try:
-            results = result_queue.get(timeout=1.0)
+            benchmark_result = result_queue.get(timeout=1.0)
             break
         except Exception:
             if not p_decode.is_alive():
                 # Drain once more in case the item arrived as the child exited.
                 try:
-                    results = result_queue.get_nowait()
+                    benchmark_result = result_queue.get_nowait()
                 except Exception:
                     print("[Main] Decode process exited before returning results.",
                           flush=True)
@@ -744,28 +942,71 @@ def main():
     except Exception:
         pass
 
-    if not results:
+    if not benchmark_result:
         print("FAIL: no results received", flush=True)
-        os._exit(1)
+        return 1
 
+    results = benchmark_result["results"]
+    measured_s = float(benchmark_result["measured_s"])
+    prompt_tokens = int(benchmark_result["prompt_tokens"])
+    output_tokens = int(benchmark_result["output_tokens"])
     print_summary(
         results,
+        measured_s,
+        prompt_tokens,
+        output_tokens,
         load_compression_ratios(compression_stats_path),
         compression_enabled=compression_spec is not None,
     )
 
-    src_tag = "hotpotqa" if args.data_path else (args.lmeval_task or "builtin")
+    src_tag = (
+        os.path.splitext(os.path.basename(args.data_path))[0]
+        if args.data_path else (args.lmeval_task or "builtin")
+    )
     csv_name = f"results_{mode_label}_{src_tag}.csv"
     save_csv(results, os.path.join(args.output_dir, csv_name))
+    summary = {
+        "mode": args.mode,
+        "compression_config": args.compression_config,
+        "model": args.model,
+        "requests": len(results),
+        "warmup_requests": args.warmup_requests,
+        "max_model_len": args.max_model_len,
+        "max_num_batched_tokens": args.max_num_batched_tokens,
+        "max_num_seqs": args.max_num_seqs,
+        "max_tokens": args.max_tokens,
+        "async_send": args.async_send,
+        "max_inflight_gib": args.max_inflight_gib,
+        "kv_buffer_gib": args.kv_buffer_gib,
+        "gpu_mem_util": args.gpu_mem_util,
+        "measured_job_time_s": measured_s,
+        "request_throughput_req_s": len(results) / measured_s,
+        "prompt_tokens": prompt_tokens,
+        "prompt_throughput_tok_s": prompt_tokens / measured_s,
+        "output_tokens": output_tokens,
+        "output_throughput_tok_s": output_tokens / measured_s,
+        "total_tokens": prompt_tokens + output_tokens,
+        "total_throughput_tok_s": (
+            prompt_tokens + output_tokens
+        ) / measured_s,
+        "tilelang_jit_excluded": args.warmup_requests > 0,
+    }
+    summary_path = os.path.join(
+        args.output_dir,
+        f"benchmark_single_{mode_label}_{src_tag}.json",
+    )
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, sort_keys=True)
+        f.write("\n")
+    print(f"[Results] Benchmark summary -> {summary_path}")
 
     n, expected = len(results), len(prompts)
     if n == expected:
-        print(f"PASS: {n}/{expected} requests completed")
-        os._exit(0)
-    else:
-        print(f"FAIL: {n}/{expected} completed")
-        os._exit(1)
+        print(f"PASS: {n}/{expected} requests completed", flush=True)
+        return 0
+    print(f"FAIL: {n}/{expected} completed", flush=True)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
