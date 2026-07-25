@@ -260,6 +260,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
         for req_meta in meta.requests:
             rid = req_meta.request_id
             transfer_id = req_meta.transfer_id
+            load_t0 = time.perf_counter()
 
             deadline = time.monotonic() + _LOAD_TIMEOUT_S
             while not self._worker_received_kv.get(transfer_id):
@@ -282,14 +283,29 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 time.sleep(0.005)
 
             if not self._worker_received_kv.get(transfer_id):
+                self._transport.record_stat({
+                    "direction": "load_wait",
+                    "kind": "timeout",
+                    "request_id": transfer_id,
+                    "scheduler_request_id": rid,
+                    "receive_wait_s": time.perf_counter() - load_t0,
+                })
                 continue
 
             layer_names, payload = self._worker_received_kv[transfer_id].popleft()
+            receive_wait_s = time.perf_counter() - load_t0
             if not self._worker_received_kv[transfer_id]:
                 self._worker_received_kv.pop(transfer_id, None)
 
             # Consumer-side failure marker (OOM, pre-INIT, etc.).
             if payload is None:
+                self._transport.record_stat({
+                    "direction": "load_wait",
+                    "kind": "failed",
+                    "request_id": transfer_id,
+                    "scheduler_request_id": rid,
+                    "receive_wait_s": receive_wait_s,
+                })
                 logger.error(
                     "[Connector][RID][RECV] transport reported failure for "
                     "rid=%s transfer_id=%s; skipping injection", rid,
@@ -297,7 +313,8 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 continue
 
             # Decompress if needed
-            if is_compressed_layer_names(layer_names):
+            compressed_payload = is_compressed_layer_names(layer_names)
+            if compressed_payload:
                 layer_names = strip_sentinel(layer_names)
                 compressor = self._get_compressor()
                 if compressor is not None:
@@ -334,6 +351,14 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 kv_cache_layer = kv_cache[forward_context.virtual_engine]
                 inject_kv_into_layer_by_blocks(
                     kv_cache_layer, stacked_kv[i], req_meta.block_ids, rid)
+            self._transport.record_stat({
+                "direction": "load_wait",
+                "kind": "compressed" if compressed_payload else "raw",
+                "request_id": transfer_id,
+                "scheduler_request_id": rid,
+                "receive_wait_s": receive_wait_s,
+                "start_load_total_s": time.perf_counter() - load_t0,
+            })
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         return

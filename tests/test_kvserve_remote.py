@@ -24,7 +24,6 @@ from test_kvserve import (
     MODEL_PATH,
     RequestResult,
     build_prompts,
-    load_compression_ratios,
     make_compression_spec,
     print_summary,
     save_csv,
@@ -83,14 +82,30 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
     if not rows:
         return {}
 
-    payload_bytes = sum(int(row.get("payload_bytes", 0)) for row in rows)
-    nccl_s = sum(float(row.get("nccl_s", 0.0)) for row in rows)
+    transfer_rows = [
+        row for row in rows if row.get("direction") in {"send", "recv"}
+    ]
+    load_rows = [row for row in rows if row.get("direction") == "load_wait"]
+    payload_bytes = sum(
+        int(row.get("payload_bytes", 0)) for row in transfer_rows)
+    nccl_s = sum(float(row.get("nccl_s", 0.0)) for row in transfer_rows)
     queue_waits = sorted(
         float(row.get("queue_wait_s", 0.0)) for row in rows
-        if "queue_wait_s" in row
+        if row.get("direction") == "send" and "queue_wait_s" in row
     )
+    receive_waits = sorted(
+        float(row.get("receive_wait_s", 0.0)) for row in load_rows
+    )
+    queued_bytes = [
+        int(row["queued_bytes_at_submit"]) for row in transfer_rows
+        if "queued_bytes_at_submit" in row
+    ]
+    queue_depths = [
+        int(row["queue_depth_at_submit"]) for row in transfer_rows
+        if "queue_depth_at_submit" in row
+    ]
     result = {
-        "records": len(rows),
+        "records": len(transfer_rows),
         "payload_bytes": payload_bytes,
         "nccl_service_s": nccl_s,
         "effective_payload_gbps": (
@@ -106,7 +121,75 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
                 min(len(queue_waits) - 1, int(len(queue_waits) * 0.95))
             ],
         })
+    if queued_bytes:
+        result["max_queued_bytes_at_submit"] = max(queued_bytes)
+    if queue_depths:
+        result["max_queue_depth_at_submit"] = max(queue_depths)
+    if receive_waits:
+        result["load_wait"] = {
+            "records": len(receive_waits),
+            "sum_s": sum(receive_waits),
+            "max_s": receive_waits[-1],
+            "p50_s": receive_waits[len(receive_waits) // 2],
+            "p95_s": receive_waits[
+                min(len(receive_waits) - 1, int(len(receive_waits) * 0.95))
+            ],
+        }
     return result
+
+
+def _load_measured_compression_ratios(
+    path: str | None,
+    measured_prefix: str,
+) -> list[float]:
+    """Read compression ratios for the measured batch, excluding warmup."""
+    if not path:
+        return []
+    ratios = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not str(row.get("transfer_id", "")).startswith(measured_prefix):
+                    continue
+                original = float(row.get("original_bytes", 0))
+                compressed = float(row.get("compressed_bytes", 0))
+                if original > 0 and compressed > 0:
+                    ratios.append(original / compressed)
+    except OSError:
+        pass
+    return ratios
+
+
+def _ib_counter_path(device: str, port: int, role: str) -> str:
+    counter = "port_xmit_data" if role == "prefill" else "port_rcv_data"
+    return os.path.join(
+        "/sys/class/infiniband", device, "ports", str(port), "counters", counter)
+
+
+def _read_ib_bytes(device: str | None, port: int, role: str) -> int | None:
+    if not device:
+        return None
+    try:
+        with open(_ib_counter_path(device, port, role), "r", encoding="ascii") as f:
+            # InfiniBand port data counters use 32-bit words, not bytes.
+            return int(f.read().strip()) * 4
+    except (OSError, ValueError):
+        return None
+
+
+def _recv_barrier_line(sock: socket.socket) -> str:
+    chunks = []
+    while True:
+        chunk = sock.recv(256)
+        if not chunk:
+            raise RuntimeError("Measurement peer closed before DONE")
+        chunks.append(chunk)
+        if b"\n" in chunk:
+            return b"".join(chunks).split(b"\n", 1)[0].decode("utf-8")
 
 
 def _validate_model_arg(model: str) -> None:
@@ -232,6 +315,8 @@ def _write_benchmark_summary(
     output_tokens: int,
     process_total_s: float,
     compression_ratios: list[float] | None = None,
+    producer_compute_s: float | None = None,
+    ib_bytes: int | None = None,
 ) -> str:
     requests = args.num_requests
     summary = {
@@ -262,6 +347,18 @@ def _write_benchmark_summary(
         "tilelang_jit_excluded": args.warmup_requests > 0,
         "timestamp_unix_s": time.time(),
     }
+    if producer_compute_s is not None:
+        summary["producer_compute_s"] = producer_compute_s
+        summary["producer_drain_and_decode_s"] = max(
+            0.0, measured_s - producer_compute_s)
+    if ib_bytes is not None:
+        summary["ib"] = {
+            "device": args.ib_device,
+            "port": args.ib_port,
+            "scope": "device_global",
+            "counter_bytes": ib_bytes,
+            "wire_gbps_over_job": ib_bytes * 8 / measured_s / 1e9,
+        }
     if compression_ratios:
         summary["avg_compression_ratio"] = (
             sum(compression_ratios) / len(compression_ratios))
@@ -359,21 +456,38 @@ def run_prefill(
                 flush=True,
             )
 
+        llm.enqueue(
+            prompts,
+            sampling_params=_make_params(
+                prompts, 1, f"{args.transfer_prefix}-measure"),
+            use_tqdm=False,
+        )
+        print(
+            f"[Measurement] role=prefill enqueued={len(prompts)} (excluded)",
+            flush=True,
+        )
         barrier = _connect_measurement_barrier(
             args.kv_ip, args.sync_port, args.sync_timeout_s)
         try:
+            ib_before = _read_ib_bytes(
+                args.ib_device, args.ib_port, "prefill")
             measured_t0 = time.perf_counter()
-            outputs = llm.generate(
-                prompts,
-                sampling_params=_make_params(
-                    prompts, 1, f"{args.transfer_prefix}-measure"),
-            )
+            outputs = llm.wait_for_completion(use_tqdm=False)
+            producer_compute_s = time.perf_counter() - measured_t0
+            done = _recv_barrier_line(barrier)
+            if not done.startswith("DONE "):
+                raise RuntimeError(f"Unexpected completion token: {done!r}")
             measured_s = time.perf_counter() - measured_t0
+            ib_after = _read_ib_bytes(
+                args.ib_device, args.ib_port, "prefill")
         finally:
             barrier.close()
 
         prompt_tokens, output_tokens = _count_tokens(outputs)
-        ratios = load_compression_ratios(args.compression_stats_path)
+        ratios = _load_measured_compression_ratios(
+            args.compression_stats_path,
+            f"{args.transfer_prefix}-measure-",
+        )
         _write_benchmark_summary(
             args=args,
             role="prefill",
@@ -384,6 +498,12 @@ def run_prefill(
             output_tokens=output_tokens,
             process_total_s=time.perf_counter() - process_t0,
             compression_ratios=ratios,
+            producer_compute_s=producer_compute_s,
+            ib_bytes=(
+                ib_after - ib_before
+                if ib_before is not None and ib_after is not None
+                else None
+            ),
         )
     finally:
         _shutdown_vllm(llm)
@@ -425,20 +545,31 @@ def run_decode(
                 flush=True,
             )
 
+        llm.enqueue(
+            prompts,
+            sampling_params=_make_params(
+                prompts,
+                args.max_tokens,
+                f"{args.transfer_prefix}-measure",
+            ),
+            use_tqdm=False,
+        )
+        print(
+            f"[Measurement] role=decode enqueued={len(prompts)} (excluded)",
+            flush=True,
+        )
         listener, barrier = _accept_measurement_barrier(
             args.kv_ip, args.sync_port, args.sync_timeout_s)
         try:
+            ib_before = _read_ib_bytes(
+                args.ib_device, args.ib_port, "decode")
             measured_t0 = time.perf_counter()
             barrier.sendall(b"GO\n")
-            outputs = llm.generate(
-                prompts,
-                sampling_params=_make_params(
-                    prompts,
-                    args.max_tokens,
-                    f"{args.transfer_prefix}-measure",
-                ),
-            )
+            outputs = llm.wait_for_completion(use_tqdm=False)
             measured_s = time.perf_counter() - measured_t0
+            ib_after = _read_ib_bytes(
+                args.ib_device, args.ib_port, "decode")
+            barrier.sendall(f"DONE {measured_s:.9f}\n".encode("ascii"))
         finally:
             barrier.close()
             listener.close()
@@ -480,6 +611,11 @@ def run_decode(
             prompt_tokens=prompt_tokens,
             output_tokens=output_tokens,
             process_total_s=time.perf_counter() - process_t0,
+            ib_bytes=(
+                ib_after - ib_before
+                if ib_before is not None and ib_after is not None
+                else None
+            ),
         )
     finally:
         _shutdown_vllm(llm)
@@ -507,13 +643,19 @@ def main() -> None:
         help="TCP measurement-barrier port (default: kv-port + 1000)",
     )
     parser.add_argument("--sync-timeout-s", type=float, default=600.0)
+    parser.add_argument(
+        "--ib-device",
+        default=None,
+        help="IB device used for hardware byte counters (for example mlx5_0).",
+    )
+    parser.add_argument("--ib-port", type=int, default=1)
     parser.add_argument("--gpu-mem-util", type=float,
                         default=GPU_MEMORY_UTILIZATION)
     parser.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN)
     parser.add_argument(
         "--max-num-batched-tokens",
         type=int,
-        default=4096,
+        default=32768,
         help="Maximum number of prompt/decode tokens scheduled in one iteration.",
     )
     parser.add_argument(
@@ -571,6 +713,8 @@ def main() -> None:
         parser.error("--max-num-seqs must be positive")
     if args.max_inflight_gib <= 0:
         parser.error("--max-inflight-gib must be positive")
+    if args.ib_port <= 0:
+        parser.error("--ib-port must be positive")
     if args.warmup_requests < 0:
         parser.error("--warmup-requests cannot be negative")
     args.sync_port = args.sync_port or args.kv_port + 1000
@@ -619,6 +763,7 @@ def main() -> None:
     print(f"  GPUs             : {args.gpus} (TP={len(_parse_gpu_list(args.gpus))})")
     print(f"  KV endpoint      : {args.kv_ip}:{args.kv_port}")
     print(f"  Barrier endpoint : {args.kv_ip}:{args.sync_port}")
+    print(f"  IB counter       : {args.ib_device or '<disabled>'}:{args.ib_port}")
     print(f"  Run label        : {args.run_label}")
     print(f"  Compression      : {args.mode}")
     print(f"  Config           : {args.compression_config or '<mode profile>'}")

@@ -137,10 +137,12 @@ class NcclTransport:
             ready_event.record(torch.cuda.current_stream(self.device))
         with self._send_queue_cv:
             payload_bytes = _tensor_nbytes(tensor)
+            self._send_pending_bytes += payload_bytes
+            queued_bytes = self._send_pending_bytes
+            queue_depth = len(self._send_queue) + self._send_inflight + 1
             self._send_queue.append(("tensor", request_id, layer_names, tensor,
                                      ready_event, time.monotonic_ns(),
-                                     payload_bytes))
-            self._send_pending_bytes += payload_bytes
+                                     queue_depth, queued_bytes, payload_bytes))
             self._send_queue_cv.notify()
 
     def send_bundle(
@@ -160,10 +162,13 @@ class NcclTransport:
             ready_event.record(torch.cuda.current_stream(self.device))
         with self._send_queue_cv:
             payload_bytes = sum(_tensor_nbytes(t) for t in body + aux)
+            self._send_pending_bytes += payload_bytes
+            queued_bytes = self._send_pending_bytes
+            queue_depth = len(self._send_queue) + self._send_inflight + 1
             self._send_queue.append(("bundle", request_id, layer_names, meta,
                                      body, aux, ready_event,
-                                     time.monotonic_ns(), payload_bytes))
-            self._send_pending_bytes += payload_bytes
+                                     time.monotonic_ns(), queue_depth,
+                                     queued_bytes, payload_bytes))
             self._send_queue_cv.notify()
 
     def wait_for_sent(self) -> None:
@@ -210,7 +215,8 @@ class NcclTransport:
 
     def _send_one(self, request_id: str, layer_names: list[str],
                   tensor: torch.Tensor, ready_event: torch.cuda.Event,
-                  enqueued_ns: int, payload_bytes: int) -> None:
+                  enqueued_ns: int, queue_depth: int, queued_bytes: int,
+                  payload_bytes: int) -> None:
         started_ns = time.monotonic_ns()
         meta = {
             "cmd": "PUT",
@@ -245,6 +251,8 @@ class NcclTransport:
             "kind": "raw",
             "request_id": request_id,
             "payload_bytes": payload_bytes,
+            "queue_depth_at_submit": queue_depth,
+            "queued_bytes_at_submit": queued_bytes,
             "queue_wait_s": (started_ns - enqueued_ns) / 1e9,
             "ack_s": ack_s,
             "nccl_s": nccl_s,
@@ -262,6 +270,8 @@ class NcclTransport:
         aux_tensors: list[torch.Tensor],
         ready_event: torch.cuda.Event,
         enqueued_ns: int,
+        queue_depth: int,
+        queued_bytes: int,
         payload_bytes: int,
     ) -> None:
         started_ns = time.monotonic_ns()
@@ -295,6 +305,8 @@ class NcclTransport:
             "kind": "bundle",
             "request_id": request_id,
             "payload_bytes": payload_bytes,
+            "queue_depth_at_submit": queue_depth,
+            "queued_bytes_at_submit": queued_bytes,
             "body_tensors": len(body_chunks),
             "aux_tensors": len(aux_tensors),
             "queue_wait_s": (started_ns - enqueued_ns) / 1e9,
@@ -335,6 +347,10 @@ class NcclTransport:
             logger.warning_once(
                 "[NcclTransport] Failed to write transport stats to %s: %s",
                 self._stats_path, exc)
+
+    def record_stat(self, row: dict[str, Any]) -> None:
+        """Append a connector-level event to the shared transport trace."""
+        self._record_stat(row)
 
     # ── Consumer-side ──────────────────────────────────────────────────────
 
