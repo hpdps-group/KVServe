@@ -388,6 +388,9 @@ class CompressedKVConnector(KVConnectorBase_V1):
             return
 
         current_rids = {req_meta.request_id for req_meta in meta.requests}
+        current_transfer_ids = [
+            req_meta.transfer_id for req_meta in meta.requests
+        ]
         logger.info(
             "[Connector][RID][SEND] scheduled this step: %s",
             _sorted_rids(current_rids),
@@ -456,8 +459,22 @@ class CompressedKVConnector(KVConnectorBase_V1):
                          rid, len(layer_names))
 
         if self._async_send:
+            pending_before = self._transport.pending_bytes()
             wait_s = self._transport.wait_for_below(
                 self._max_inflight_bytes)
+            pending_after = self._transport.pending_bytes()
+            if current_transfer_ids:
+                self._transport.record_stat({
+                    "direction": "backpressure",
+                    "kind": "producer",
+                    "request_id": current_transfer_ids[0],
+                    "scheduled_requests": len(current_transfer_ids),
+                    "blocked": pending_before > self._max_inflight_bytes,
+                    "pending_before_bytes": pending_before,
+                    "pending_after_bytes": pending_after,
+                    "limit_bytes": self._max_inflight_bytes,
+                    "wait_s": wait_s,
+                })
             if wait_s > 0.001:
                 logger.info(
                     "[Connector] async send backpressure %.3f ms "

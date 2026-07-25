@@ -86,6 +86,9 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
         row for row in rows if row.get("direction") in {"send", "recv"}
     ]
     load_rows = [row for row in rows if row.get("direction") == "load_wait"]
+    backpressure_rows = [
+        row for row in rows if row.get("direction") == "backpressure"
+    ]
     payload_bytes = sum(
         int(row.get("payload_bytes", 0)) for row in transfer_rows)
     nccl_s = sum(float(row.get("nccl_s", 0.0)) for row in transfer_rows)
@@ -134,6 +137,25 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
             "p95_s": receive_waits[
                 min(len(receive_waits) - 1, int(len(receive_waits) * 0.95))
             ],
+        }
+    if backpressure_rows:
+        blocked_rows = [
+            row for row in backpressure_rows if bool(row.get("blocked"))
+        ]
+        waits = [float(row.get("wait_s", 0.0)) for row in blocked_rows]
+        result["backpressure"] = {
+            "checkpoints": len(backpressure_rows),
+            "blocked_checkpoints": len(blocked_rows),
+            "wait_sum_s": sum(waits),
+            "wait_max_s": max(waits, default=0.0),
+            "pending_peak_bytes": max(
+                int(row.get("pending_before_bytes", 0))
+                for row in backpressure_rows
+            ),
+            "limit_bytes": max(
+                int(row.get("limit_bytes", 0))
+                for row in backpressure_rows
+            ),
         }
     return result
 
