@@ -380,7 +380,8 @@ def make_compression_spec(args) -> object:
 
 def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
                 compression_spec, prompts, compression_stats_path,
-                max_model_len=MAX_MODEL_LEN):
+                max_model_len=MAX_MODEL_LEN,
+                kv_buffer_size=1_000_000_000):
     prefill_devices = _parse_gpu_list(str(prefill_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(prefill_devices)
     if compression_stats_path:
@@ -398,6 +399,7 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
         kv_parallel_size=2,
         kv_ip="127.0.0.1",
         kv_port=kv_port,
+        kv_buffer_size=kv_buffer_size,
         kv_connector_extra_config={"compression": compression_spec},
     )
     llm = LLM(
@@ -424,7 +426,8 @@ def run_prefill(model, prefill_gpus, kv_port, gpu_mem_util,
 
 def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
                compression_spec, prompts, max_tokens, mode_label,
-               print_outputs, max_model_len=MAX_MODEL_LEN):
+               print_outputs, max_model_len=MAX_MODEL_LEN,
+               kv_buffer_size=1_000_000_000):
     decode_devices = _parse_gpu_list(str(decode_gpus))
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(decode_devices)
     tp_size = len(decode_devices)
@@ -440,6 +443,7 @@ def run_decode(model, decode_gpus, kv_port, result_queue, gpu_mem_util,
         kv_parallel_size=2,
         kv_ip="127.0.0.1",
         kv_port=kv_port,
+        kv_buffer_size=kv_buffer_size,
         kv_connector_extra_config={"compression": compression_spec},
     )
     llm = LLM(
@@ -590,6 +594,12 @@ def main():
                              "Overrides --decode-gpu and enables TP by list length.")
     parser.add_argument("--kv-port", type=int, default=DEFAULT_KV_PORT)
     parser.add_argument("--gpu-mem-util", type=float, default=GPU_MEMORY_UTILIZATION)
+    parser.add_argument(
+        "--kv-buffer-gib",
+        type=float,
+        default=1.0,
+        help="Per-channel decode staging capacity enforced by receiver credits.",
+    )
 
     # Compression mode
     parser.add_argument("--mode",
@@ -621,6 +631,8 @@ def main():
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
 
     args = parser.parse_args()
+    if args.kv_buffer_gib <= 0:
+        parser.error("--kv-buffer-gib must be positive")
 
     prefill_gpus = args.prefill_gpus or str(args.prefill_gpu)
     decode_gpus = args.decode_gpus or str(args.decode_gpu)
@@ -664,6 +676,7 @@ def main():
         else f"{args.kv_port}-{args.kv_port + prefill_tp - 1}"
     )
     print(f"  KV port(s)   : {kv_ports}")
+    print(f"  Receive stage: {args.kv_buffer_gib:.2f} GiB/channel")
     print(f"{'='*60}\n")
 
     compression_stats_path = None
@@ -686,13 +699,14 @@ def main():
         target=run_prefill,
         args=(args.model, prefill_gpus, args.kv_port, args.gpu_mem_util,
               compression_spec, prompts, compression_stats_path,
-              args.max_model_len),
+              args.max_model_len, int(args.kv_buffer_gib * 1024**3)),
     )
     p_decode = mp.Process(
         target=run_decode,
         args=(args.model, decode_gpus, args.kv_port, result_queue,
               args.gpu_mem_util, compression_spec, prompts, args.max_tokens,
-              mode_label, args.print_outputs, args.max_model_len),
+              mode_label, args.print_outputs, args.max_model_len,
+              int(args.kv_buffer_gib * 1024**3)),
     )
 
     # Start decode first so the consumer transport is ready to receive as

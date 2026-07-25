@@ -45,6 +45,12 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=32)
     parser.add_argument("--gpu-mem-util", type=float, default=0.6)
     parser.add_argument("--max-inflight-gib", type=float, default=4.0)
+    parser.add_argument(
+        "--kv-buffer-gib",
+        type=float,
+        default=1.0,
+        help="Per-channel decode staging capacity enforced by receiver credits.",
+    )
     parser.add_argument("--sync-timeout-s", type=float, default=900.0)
     parser.add_argument(
         "--async-send",
@@ -116,6 +122,7 @@ def main() -> int:
             "--max-tokens", str(args.max_tokens),
             "--gpu-mem-util", str(args.gpu_mem_util),
             "--max-inflight-gib", str(args.max_inflight_gib),
+            "--kv-buffer-gib", str(args.kv_buffer_gib),
         ]
         if args.compression_config:
             cmd.extend(["--compression-config", args.compression_config])

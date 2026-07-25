@@ -12,19 +12,23 @@ Protocol:
 
   Per-transfer (PUT mode):
     Producer  → PUT{request_id, layer_names, shape, dtype}
-    Consumer allocates GPU tensor
+    Consumer reserves byte credits and allocates a GPU tensor
     Consumer  → ACK b"0"
-    Producer  ncclSend on send_stream  (background thread, PUT_ASYNC)
-    Consumer  ncclRecv on recv_stream  (listener thread, only on-demand)
-    Consumer stores tensor in _received
+    Producer  enqueues ncclSend on send_stream
+    Consumer  enqueues ncclRecv on recv_stream
+    Completion threads retire CUDA events in order; the consumer publishes a
+    tensor only after its receive event completes. The connector releases its
+    receiver credit after injecting the payload into the decode KV cache.
 
-Key: ncclRecv is NEVER blocking in the background — it only runs after a ZMQ
-signal arrives.  Between requests the recv_stream has no pending ops, so
-torch.cuda.synchronize() during CUDA graph capture is not blocked.
+Key: control submission, GPU transfer completion, and decode consumption are
+decoupled. Multiple requests can be queued on the ordered NCCL streams without
+a per-request stream synchronize, while real receiver staging capacity bounds
+the number of resident payloads.
 """
 
 import ctypes
 import json
+import math
 import os
 import threading
 import time
@@ -55,6 +59,22 @@ def _tensor_nbytes(tensor: torch.Tensor) -> int:
     return tensor.numel() * tensor.element_size()
 
 
+def _spec_nbytes(spec: dict[str, Any]) -> int:
+    dtype = getattr(torch, spec["dtype"])
+    return math.prod(spec["shape"]) * torch.empty((), dtype=dtype).element_size()
+
+
+def _payload_nbytes(payload: Any) -> int:
+    if isinstance(payload, torch.Tensor):
+        return _tensor_nbytes(payload)
+    if isinstance(payload, dict) and payload.get("__bundle__"):
+        return sum(
+            _tensor_nbytes(t)
+            for t in payload["body_chunks"] + payload["aux_tensors"]
+        )
+    return 0
+
+
 class NcclTransport:
     """ZMQ signaling + NCCL data transfer.
 
@@ -63,7 +83,8 @@ class NcclTransport:
     """
 
     def __init__(self, is_sender: bool, host: str, port: int,
-                 local_rank: int = 0, channel_rank: int = 0):
+                 local_rank: int = 0, channel_rank: int = 0,
+                 recv_buffer_size: int = 1_000_000_000):
         self.is_sender = is_sender
         self.local_rank = local_rank
         self.channel_rank = channel_rank
@@ -101,6 +122,14 @@ class NcclTransport:
             self._send_queue: deque = deque()
             self._send_inflight = 0
             self._send_pending_bytes = 0
+            self._send_completion_cv = threading.Condition()
+            self._send_completions: deque = deque()
+            self._send_completion_thread = threading.Thread(
+                target=self._send_completion_loop,
+                daemon=True,
+                name="nccl-send-complete",
+            )
+            self._send_completion_thread.start()
             self._send_thread = threading.Thread(
                 target=self._send_loop, daemon=True, name="nccl-send")
             self._send_thread.start()
@@ -114,16 +143,31 @@ class NcclTransport:
                 self.port, local_rank, channel_rank)
 
             self._lock = threading.Lock()
+            self._recv_budget_cv = threading.Condition(self._lock)
+            self._recv_capacity_bytes = max(1, int(recv_buffer_size))
+            self._recv_reserved_bytes = 0
             # ZMQ "request_id" is the connector wire key (transfer_key from connector).
             # Multiple PUTs for the same key append in order; deque preserves FIFO.
             self._received: dict[str, deque[tuple[list[str], Any]]] = (
                 defaultdict(deque))
             self._recv_stream = torch.cuda.Stream(device=self.device)
+            self._recv_completion_cv = threading.Condition()
+            self._recv_completions: deque = deque()
+            self._recv_completion_thread = threading.Thread(
+                target=self._recv_completion_loop,
+                daemon=True,
+                name="nccl-recv-complete",
+            )
+            self._recv_completion_thread.start()
 
             # Listener handles both INIT and DATA messages
             self._listener = threading.Thread(
                 target=self._listen_loop, daemon=True, name="nccl-listen")
             self._listener.start()
+            logger.info(
+                "[NcclTransport] Consumer staging credits: capacity=%d bytes "
+                "(channel_rank=%d)",
+                self._recv_capacity_bytes, channel_rank)
 
     # ── Producer-side ──────────────────────────────────────────────────────
 
@@ -202,21 +246,54 @@ class NcclTransport:
             try:
                 kind = item[0]
                 if kind == "tensor":
-                    self._send_one(*item[1:])
+                    completion = self._send_one(*item[1:])
                 elif kind == "bundle":
-                    self._send_bundle_one(*item[1:])
+                    completion = self._send_bundle_one(*item[1:])
                 else:
                     logger.error("[NcclTransport] Unknown send item kind: %s", kind)
+                    completion = None
+                if completion is None:
+                    self._finish_send_item(int(item[-1]))
+                else:
+                    with self._send_completion_cv:
+                        self._send_completions.append(completion)
+                        self._send_completion_cv.notify()
+            except Exception as exc:
+                logger.error("[NcclTransport] send_loop error: %s", exc)
+                self._finish_send_item(int(item[-1]))
+
+    def _finish_send_item(self, payload_bytes: int) -> None:
+        with self._send_queue_cv:
+            self._send_pending_bytes -= payload_bytes
+            self._send_inflight -= 1
+            self._send_queue_cv.notify_all()
+
+    def _send_completion_loop(self) -> None:
+        """Retire ordered sends without serializing their NCCL submission."""
+        while True:
+            with self._send_completion_cv:
+                while not self._send_completions:
+                    self._send_completion_cv.wait()
+                start_event, event, row, payload_bytes, keepalive = (
+                    self._send_completions.popleft())
+            try:
+                event.synchronize()
+                row["nccl_s"] = start_event.elapsed_time(event) / 1e3
+                row["total_s"] = (
+                    time.monotonic_ns() - row.pop("_enqueued_ns")) / 1e9
+                self._record_stat(row)
+            except Exception as exc:
+                logger.error(
+                    "[NcclTransport] send completion error for %s: %s",
+                    row.get("request_id"), exc)
             finally:
-                with self._send_queue_cv:
-                    self._send_pending_bytes -= int(item[-1])
-                    self._send_inflight -= 1
-                    self._send_queue_cv.notify_all()
+                del keepalive
+                self._finish_send_item(payload_bytes)
 
     def _send_one(self, request_id: str, layer_names: list[str],
                   tensor: torch.Tensor, ready_event: torch.cuda.Event,
                   enqueued_ns: int, queue_depth: int, queued_bytes: int,
-                  payload_bytes: int) -> None:
+                  payload_bytes: int) -> Optional[tuple]:
         started_ns = time.monotonic_ns()
         meta = {
             "cmd": "PUT",
@@ -231,11 +308,12 @@ class NcclTransport:
         ack_s = time.perf_counter() - control_t0
         if ack != _NCCL_ACK_OK:
             logger.error("[NcclTransport] Consumer OOM for %s", request_id)
-            return
+            return None
 
-        nccl_t0 = time.perf_counter()
         with torch.cuda.stream(self._send_stream):
             self._send_stream.wait_event(ready_event)
+            start_event = torch.cuda.Event(enable_timing=True)
+            start_event.record(self._send_stream)
             self.nccl.ncclSend(
                 buffer_type(tensor.data_ptr()),
                 tensor.numel(),
@@ -244,9 +322,9 @@ class NcclTransport:
                 self._comm,
                 cudaStream_t(self._send_stream.cuda_stream),
             )
-        self._send_stream.synchronize()
-        nccl_s = time.perf_counter() - nccl_t0
-        self._record_stat({
+            completion_event = torch.cuda.Event(enable_timing=True)
+            completion_event.record(self._send_stream)
+        row = {
             "direction": "send",
             "kind": "raw",
             "request_id": request_id,
@@ -255,11 +333,17 @@ class NcclTransport:
             "queued_bytes_at_submit": queued_bytes,
             "queue_wait_s": (started_ns - enqueued_ns) / 1e9,
             "ack_s": ack_s,
-            "nccl_s": nccl_s,
-            "total_s": (time.monotonic_ns() - enqueued_ns) / 1e9,
-        })
+            "_enqueued_ns": enqueued_ns,
+        }
         logger.debug("[NcclTransport][RID][SEND] sent rid=%s shape=%s",
                      request_id, list(tensor.shape))
+        return (
+            start_event,
+            completion_event,
+            row,
+            payload_bytes,
+            (tensor, ready_event),
+        )
 
     def _send_bundle_one(
         self,
@@ -273,7 +357,7 @@ class NcclTransport:
         queue_depth: int,
         queued_bytes: int,
         payload_bytes: int,
-    ) -> None:
+    ) -> Optional[tuple]:
         started_ns = time.monotonic_ns()
         body_specs = [_tensor_spec(t) for t in body_chunks]
         aux_specs = [_tensor_spec(t) for t in aux_tensors]
@@ -291,16 +375,17 @@ class NcclTransport:
         ack_s = time.perf_counter() - control_t0
         if ack != _NCCL_ACK_OK:
             logger.error("[NcclTransport] Consumer OOM for bundle %s", request_id)
-            return
+            return None
 
-        nccl_t0 = time.perf_counter()
         with torch.cuda.stream(self._send_stream):
             self._send_stream.wait_event(ready_event)
+            start_event = torch.cuda.Event(enable_timing=True)
+            start_event.record(self._send_stream)
             for tensor in body_chunks + aux_tensors:
                 self._nccl_send_tensor(tensor)
-        self._send_stream.synchronize()
-        nccl_s = time.perf_counter() - nccl_t0
-        self._record_stat({
+            completion_event = torch.cuda.Event(enable_timing=True)
+            completion_event.record(self._send_stream)
+        row = {
             "direction": "send",
             "kind": "bundle",
             "request_id": request_id,
@@ -311,12 +396,18 @@ class NcclTransport:
             "aux_tensors": len(aux_tensors),
             "queue_wait_s": (started_ns - enqueued_ns) / 1e9,
             "ack_s": ack_s,
-            "nccl_s": nccl_s,
-            "total_s": (time.monotonic_ns() - enqueued_ns) / 1e9,
-        })
+            "_enqueued_ns": enqueued_ns,
+        }
         logger.debug(
             "[NcclTransport][RID][SEND] sent bundle rid=%s body=%d aux=%d",
             request_id, len(body_chunks), len(aux_tensors))
+        return (
+            start_event,
+            completion_event,
+            row,
+            payload_bytes,
+            (body_chunks, aux_tensors, ready_event),
+        )
 
     def _nccl_send_tensor(self, tensor: torch.Tensor) -> None:
         if tensor.numel() == 0:
@@ -364,6 +455,66 @@ class NcclTransport:
             self._received.clear()
         return result
 
+    @staticmethod
+    def payload_nbytes(payload: Any) -> int:
+        return _payload_nbytes(payload)
+
+    def release_received(self, request_id: str, payload_bytes: int) -> None:
+        """Release receiver staging credits after KV has been injected."""
+        assert not self.is_sender
+        if payload_bytes <= 0:
+            return
+        with self._recv_budget_cv:
+            before = self._recv_reserved_bytes
+            self._recv_reserved_bytes = max(
+                0, self._recv_reserved_bytes - int(payload_bytes))
+            after = self._recv_reserved_bytes
+            self._recv_budget_cv.notify_all()
+        self._record_stat({
+            "direction": "recv_credit_release",
+            "kind": "release",
+            "request_id": request_id,
+            "payload_bytes": int(payload_bytes),
+            "reserved_before_bytes": before,
+            "reserved_after_bytes": after,
+            "capacity_bytes": self._recv_capacity_bytes,
+        })
+
+    def _reserve_received(self, request_id: str, payload_bytes: int) -> None:
+        """Wait for decode-side staging capacity before ACKing a PUT.
+
+        A single oversize payload is admitted when the buffer is otherwise
+        empty, which avoids deadlock while still bounding concurrent staging.
+        """
+        wait_t0 = time.perf_counter()
+        with self._recv_budget_cv:
+            blocked = (
+                self._recv_reserved_bytes > 0
+                and self._recv_reserved_bytes + payload_bytes
+                > self._recv_capacity_bytes
+            )
+            while (
+                self._recv_reserved_bytes > 0
+                and self._recv_reserved_bytes + payload_bytes
+                > self._recv_capacity_bytes
+            ):
+                self._recv_budget_cv.wait()
+            before = self._recv_reserved_bytes
+            self._recv_reserved_bytes += payload_bytes
+            after = self._recv_reserved_bytes
+        self._record_stat({
+            "direction": "recv_credit",
+            "kind": "reserve",
+            "request_id": request_id,
+            "payload_bytes": payload_bytes,
+            "blocked": blocked,
+            "wait_s": time.perf_counter() - wait_t0,
+            "reserved_before_bytes": before,
+            "reserved_after_bytes": after,
+            "capacity_bytes": self._recv_capacity_bytes,
+            "oversize": payload_bytes > self._recv_capacity_bytes,
+        })
+
     def _mark_failed(self, request_id: str) -> None:
         """Post a sentinel so the connector can fast-fail this transfer
         instead of blocking until the load timeout. Producer-side OOM is
@@ -371,6 +522,29 @@ class NcclTransport:
         with self._lock:
             self._received[request_id].append(
                 (FAILED_LAYER_NAMES, FAILED_PAYLOAD))
+
+    def _recv_completion_loop(self) -> None:
+        """Publish payloads only after their ordered NCCL receives complete."""
+        while True:
+            with self._recv_completion_cv:
+                while not self._recv_completions:
+                    self._recv_completion_cv.wait()
+                start_event, event, rid, layer_names, payload, row = (
+                    self._recv_completions.popleft())
+            try:
+                event.synchronize()
+                row["nccl_s"] = start_event.elapsed_time(event) / 1e3
+                row["total_s"] = (
+                    time.monotonic_ns() - row.pop("_recv_started_ns")) / 1e9
+                with self._lock:
+                    self._received[rid].append((layer_names, payload))
+                self._record_stat(row)
+            except Exception as exc:
+                logger.error(
+                    "[NcclTransport] recv completion error for %s: %s",
+                    rid, exc)
+                self.release_received(rid, int(row["payload_bytes"]))
+                self._mark_failed(rid)
 
     def _listen_loop(self) -> None:
         """Handle INIT and PUT messages from the producer."""
@@ -403,19 +577,29 @@ class NcclTransport:
 
                     shape = tuple(msg["shape"])
                     dtype = getattr(torch, msg["dtype"])
+                    payload_bytes = (
+                        math.prod(shape)
+                        * torch.empty((), dtype=dtype).element_size()
+                    )
+                    self._reserve_received(msg["request_id"], payload_bytes)
                     try:
                         tensor = torch.empty(shape, dtype=dtype,
                                              device=self.device)
-                        self._sock.send_multipart([identity, _NCCL_ACK_OK])
                     except torch.cuda.OutOfMemoryError:
+                        self.release_received(
+                            msg["request_id"], payload_bytes)
                         logger.error("[NcclTransport] OOM for %s",
                                      msg["request_id"])
                         self._sock.send_multipart([identity, _NCCL_ACK_OOM])
                         self._mark_failed(msg["request_id"])
                         continue
 
-                    nccl_t0 = time.perf_counter()
+                    # ACK before ncclRecv: the producer does not submit its
+                    # matching ncclSend until this control response arrives.
+                    self._sock.send_multipart([identity, _NCCL_ACK_OK])
                     with torch.cuda.stream(self._recv_stream):
+                        start_event = torch.cuda.Event(enable_timing=True)
+                        start_event.record(self._recv_stream)
                         self.nccl.ncclRecv(
                             buffer_type(tensor.data_ptr()),
                             tensor.numel(),
@@ -424,25 +608,25 @@ class NcclTransport:
                             comm,
                             cudaStream_t(self._recv_stream.cuda_stream),
                         )
-                    self._recv_stream.synchronize()
-                    nccl_s = time.perf_counter() - nccl_t0
-
+                        completion_event = torch.cuda.Event(enable_timing=True)
+                        completion_event.record(self._recv_stream)
                     rid = msg["request_id"]
                     layer_names = msg["layer_names"]
-                    logger.debug(
-                        "[NcclTransport][RID][RECV] received rid=%s shape=%s",
-                        rid, list(tensor.shape))
-                    with self._lock:
-                        self._received[rid].append((layer_names, tensor))
-                    self._record_stat({
+                    row = {
                         "direction": "recv",
                         "kind": "raw",
                         "request_id": rid,
-                        "payload_bytes": _tensor_nbytes(tensor),
-                        "nccl_s": nccl_s,
-                        "total_s": (
-                            time.monotonic_ns() - recv_started_ns) / 1e9,
-                    })
+                        "payload_bytes": payload_bytes,
+                        "_recv_started_ns": recv_started_ns,
+                    }
+                    with self._recv_completion_cv:
+                        self._recv_completions.append(
+                            (start_event, completion_event, rid, layer_names,
+                             tensor, row))
+                        self._recv_completion_cv.notify()
+                    logger.debug(
+                        "[NcclTransport][RID][RECV] submitted rid=%s shape=%s",
+                        rid, list(tensor.shape))
 
                 elif cmd == "PUT_BUNDLE":
                     recv_started_ns = time.monotonic_ns()
@@ -452,6 +636,11 @@ class NcclTransport:
                         self._mark_failed(msg["request_id"])
                         continue
 
+                    payload_bytes = sum(
+                        _spec_nbytes(spec)
+                        for spec in msg["body_specs"] + msg["aux_specs"]
+                    )
+                    self._reserve_received(msg["request_id"], payload_bytes)
                     try:
                         body_tensors = [
                             _allocate_from_spec(spec, self.device)
@@ -461,16 +650,20 @@ class NcclTransport:
                             _allocate_from_spec(spec, self.device)
                             for spec in msg["aux_specs"]
                         ]
-                        self._sock.send_multipart([identity, _NCCL_ACK_OK])
                     except torch.cuda.OutOfMemoryError:
+                        self.release_received(
+                            msg["request_id"], payload_bytes)
                         logger.error("[NcclTransport] OOM for bundle %s",
                                      msg["request_id"])
                         self._sock.send_multipart([identity, _NCCL_ACK_OOM])
                         self._mark_failed(msg["request_id"])
                         continue
 
-                    nccl_t0 = time.perf_counter()
+                    # Preserve the same control/data ordering as raw PUT.
+                    self._sock.send_multipart([identity, _NCCL_ACK_OK])
                     with torch.cuda.stream(self._recv_stream):
+                        start_event = torch.cuda.Event(enable_timing=True)
+                        start_event.record(self._recv_stream)
                         for tensor in body_tensors + aux_tensors:
                             if tensor.numel() == 0:
                                 continue
@@ -482,9 +675,8 @@ class NcclTransport:
                                 comm,
                                 cudaStream_t(self._recv_stream.cuda_stream),
                             )
-                    self._recv_stream.synchronize()
-                    nccl_s = time.perf_counter() - nccl_t0
-
+                        completion_event = torch.cuda.Event(enable_timing=True)
+                        completion_event.record(self._recv_stream)
                     rid = msg["request_id"]
                     layer_names = msg["layer_names"]
                     payload = {
@@ -493,25 +685,24 @@ class NcclTransport:
                         "body_chunks": body_tensors,
                         "aux_tensors": aux_tensors,
                     }
-                    logger.debug(
-                        "[NcclTransport][RID][RECV] received bundle rid=%s "
-                        "body=%d aux=%d",
-                        rid, len(body_tensors), len(aux_tensors))
-                    with self._lock:
-                        self._received[rid].append((layer_names, payload))
-                    self._record_stat({
+                    row = {
                         "direction": "recv",
                         "kind": "bundle",
                         "request_id": rid,
-                        "payload_bytes": sum(
-                            _tensor_nbytes(t)
-                            for t in body_tensors + aux_tensors),
+                        "payload_bytes": payload_bytes,
                         "body_tensors": len(body_tensors),
                         "aux_tensors": len(aux_tensors),
-                        "nccl_s": nccl_s,
-                        "total_s": (
-                            time.monotonic_ns() - recv_started_ns) / 1e9,
-                    })
+                        "_recv_started_ns": recv_started_ns,
+                    }
+                    with self._recv_completion_cv:
+                        self._recv_completions.append(
+                            (start_event, completion_event, rid, layer_names,
+                             payload, row))
+                        self._recv_completion_cv.notify()
+                    logger.debug(
+                        "[NcclTransport][RID][RECV] submitted bundle rid=%s "
+                        "body=%d aux=%d",
+                        rid, len(body_tensors), len(aux_tensors))
 
             except Exception as e:
                 logger.error("[NcclTransport] listen_loop error: %s", e)

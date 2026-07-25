@@ -89,6 +89,9 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
     backpressure_rows = [
         row for row in rows if row.get("direction") == "backpressure"
     ]
+    credit_rows = [
+        row for row in rows if row.get("direction") == "recv_credit"
+    ]
     payload_bytes = sum(
         int(row.get("payload_bytes", 0)) for row in transfer_rows)
     nccl_s = sum(float(row.get("nccl_s", 0.0)) for row in transfer_rows)
@@ -107,6 +110,10 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
         int(row["queue_depth_at_submit"]) for row in transfer_rows
         if "queue_depth_at_submit" in row
     ]
+    ack_waits = sorted(
+        float(row.get("ack_s", 0.0)) for row in transfer_rows
+        if row.get("direction") == "send" and "ack_s" in row
+    )
     result = {
         "records": len(transfer_rows),
         "payload_bytes": payload_bytes,
@@ -128,6 +135,15 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
         result["max_queued_bytes_at_submit"] = max(queued_bytes)
     if queue_depths:
         result["max_queue_depth_at_submit"] = max(queue_depths)
+    if ack_waits:
+        result["ack_wait"] = {
+            "sum_s": sum(ack_waits),
+            "max_s": ack_waits[-1],
+            "p50_s": ack_waits[len(ack_waits) // 2],
+            "p95_s": ack_waits[
+                min(len(ack_waits) - 1, int(len(ack_waits) * 0.95))
+            ],
+        }
     if receive_waits:
         result["load_wait"] = {
             "records": len(receive_waits),
@@ -155,6 +171,26 @@ def _transport_summary(path: str, measured_prefix: str) -> dict:
             "limit_bytes": max(
                 int(row.get("limit_bytes", 0))
                 for row in backpressure_rows
+            ),
+        }
+    if credit_rows:
+        blocked_rows = [row for row in credit_rows if bool(row.get("blocked"))]
+        waits = [float(row.get("wait_s", 0.0)) for row in blocked_rows]
+        result["receiver_credits"] = {
+            "reservations": len(credit_rows),
+            "blocked_reservations": len(blocked_rows),
+            "wait_sum_s": sum(waits),
+            "wait_max_s": max(waits, default=0.0),
+            "reserved_peak_bytes": max(
+                int(row.get("reserved_after_bytes", 0))
+                for row in credit_rows
+            ),
+            "capacity_bytes": max(
+                int(row.get("capacity_bytes", 0))
+                for row in credit_rows
+            ),
+            "oversize_reservations": sum(
+                bool(row.get("oversize")) for row in credit_rows
             ),
         }
     return result
@@ -354,6 +390,7 @@ def _write_benchmark_summary(
         "max_num_seqs": args.max_num_seqs,
         "async_send": args.async_send,
         "max_inflight_gib": args.max_inflight_gib,
+        "kv_buffer_gib": args.kv_buffer_gib,
         "max_tokens": args.max_tokens,
         "engine_init_s": engine_init_s,
         "warmup_s": warmup_s,
@@ -424,6 +461,7 @@ def _build_llm(args, compression_spec: object, role: str):
         kv_parallel_size=2,
         kv_ip=args.kv_ip,
         kv_port=args.kv_port,
+        kv_buffer_size=args.kv_buffer_gib * 1024**3,
         kv_connector_extra_config={"compression": compression_spec},
     )
     return LLM(
@@ -698,6 +736,12 @@ def main() -> None:
         default=4.0,
         help="Async producer send-queue high-water mark in GiB.",
     )
+    parser.add_argument(
+        "--kv-buffer-gib",
+        type=float,
+        default=1.0,
+        help="Per-channel decode staging capacity enforced by receiver credits.",
+    )
     parser.add_argument("--num-requests", type=int, default=20)
     parser.add_argument("--warmup-requests", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=32)
@@ -736,6 +780,8 @@ def main() -> None:
         parser.error("--max-num-seqs must be positive")
     if args.max_inflight_gib <= 0:
         parser.error("--max-inflight-gib must be positive")
+    if args.kv_buffer_gib <= 0:
+        parser.error("--kv-buffer-gib must be positive")
     if args.ib_port <= 0:
         parser.error("--ib-port must be positive")
     if args.warmup_requests < 0:
@@ -797,6 +843,7 @@ def main() -> None:
     print(
         f"  Async send       : {args.async_send} "
         f"(limit={args.max_inflight_gib:.2f} GiB)")
+    print(f"  Receive staging  : {args.kv_buffer_gib:.2f} GiB/channel")
     print(f"  Prefix           : {args.transfer_prefix}")
     print("=" * 64 + "\n", flush=True)
 
