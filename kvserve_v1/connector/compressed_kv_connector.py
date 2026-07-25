@@ -45,7 +45,10 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
-_LOAD_TIMEOUT_S = 60.0
+try:
+    _LOAD_TIMEOUT_S = float(os.environ.get("KVSERVE_LOAD_TIMEOUT_S", "60"))
+except ValueError:
+    _LOAD_TIMEOUT_S = 60.0
 _DEFAULT_MAX_NCCL_CHUNK_BYTES = 512 * 1024 * 1024
 
 
