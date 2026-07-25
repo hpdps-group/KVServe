@@ -60,6 +60,55 @@ def _compression_stats_path(output_dir: str, run_label: str) -> str:
         output_dir, f"compression_stats_remote_{_safe_label(run_label)}.jsonl")
 
 
+def _transport_stats_path(output_dir: str, run_label: str, role: str) -> str:
+    return os.path.join(
+        output_dir,
+        f"transport_stats_remote_{_safe_label(run_label)}_{role}.jsonl",
+    )
+
+
+def _transport_summary(path: str, measured_prefix: str) -> dict:
+    rows = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if str(row.get("request_id", "")).startswith(measured_prefix):
+                    rows.append(row)
+    except OSError:
+        return {}
+    if not rows:
+        return {}
+
+    payload_bytes = sum(int(row.get("payload_bytes", 0)) for row in rows)
+    nccl_s = sum(float(row.get("nccl_s", 0.0)) for row in rows)
+    queue_waits = sorted(
+        float(row.get("queue_wait_s", 0.0)) for row in rows
+        if "queue_wait_s" in row
+    )
+    result = {
+        "records": len(rows),
+        "payload_bytes": payload_bytes,
+        "nccl_service_s": nccl_s,
+        "effective_payload_gbps": (
+            payload_bytes * 8 / nccl_s / 1e9 if nccl_s > 0 else None
+        ),
+    }
+    if queue_waits:
+        result.update({
+            "queue_wait_sum_s": sum(queue_waits),
+            "queue_wait_max_s": queue_waits[-1],
+            "queue_wait_p50_s": queue_waits[len(queue_waits) // 2],
+            "queue_wait_p95_s": queue_waits[
+                min(len(queue_waits) - 1, int(len(queue_waits) * 0.95))
+            ],
+        })
+    return result
+
+
 def _validate_model_arg(model: str) -> None:
     """Fail early with a clear error for missing local model mounts."""
     if model.startswith("/") or model.startswith("."):
@@ -195,6 +244,9 @@ def _write_benchmark_summary(
         "warmup_requests": args.warmup_requests,
         "max_model_len": args.max_model_len,
         "max_num_batched_tokens": args.max_num_batched_tokens,
+        "max_num_seqs": args.max_num_seqs,
+        "async_send": args.async_send,
+        "max_inflight_gib": args.max_inflight_gib,
         "max_tokens": args.max_tokens,
         "engine_init_s": engine_init_s,
         "warmup_s": warmup_s,
@@ -214,6 +266,10 @@ def _write_benchmark_summary(
         summary["avg_compression_ratio"] = (
             sum(compression_ratios) / len(compression_ratios))
         summary["compression_ratio_samples"] = len(compression_ratios)
+    transport = _transport_summary(
+        args.transport_stats_path, f"{args.transfer_prefix}-measure-")
+    if transport:
+        summary["transport"] = transport
 
     path = os.path.join(
         args.output_dir,
@@ -256,6 +312,7 @@ def _build_llm(args, compression_spec: object, role: str):
         gpu_memory_utilization=args.gpu_mem_util,
         max_model_len=args.max_model_len,
         max_num_batched_tokens=args.max_num_batched_tokens,
+        max_num_seqs=args.max_num_seqs,
         tensor_parallel_size=len(devices),
         enable_prefix_caching=False,
         enforce_eager=True,
@@ -272,6 +329,10 @@ def run_prefill(
     process_t0: float,
 ) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(_parse_gpu_list(args.gpus))
+    os.environ["KVSERVE_TRANSPORT_STATS_PATH"] = args.transport_stats_path
+    os.environ["KVSERVE_ASYNC_SEND"] = "1" if args.async_send else "0"
+    os.environ["KVSERVE_MAX_INFLIGHT_BYTES"] = str(
+        int(args.max_inflight_gib * 1024**3))
     if args.compression_stats_path:
         os.environ["KVSERVE_COMPRESSION_STATS_PATH"] = args.compression_stats_path
 
@@ -336,6 +397,7 @@ def run_decode(
     process_t0: float,
 ) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(_parse_gpu_list(args.gpus))
+    os.environ["KVSERVE_TRANSPORT_STATS_PATH"] = args.transport_stats_path
 
     init_t0 = time.perf_counter()
     llm = _build_llm(args, compression_spec, "decode")
@@ -454,6 +516,23 @@ def main() -> None:
         default=4096,
         help="Maximum number of prompt/decode tokens scheduled in one iteration.",
     )
+    parser.add_argument(
+        "--max-num-seqs",
+        type=int,
+        default=128,
+        help="Maximum number of sequences scheduled concurrently.",
+    )
+    parser.add_argument(
+        "--async-send",
+        action="store_true",
+        help="Allow producer NCCL sends to span scheduler iterations.",
+    )
+    parser.add_argument(
+        "--max-inflight-gib",
+        type=float,
+        default=4.0,
+        help="Async producer send-queue high-water mark in GiB.",
+    )
     parser.add_argument("--num-requests", type=int, default=20)
     parser.add_argument("--warmup-requests", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=32)
@@ -488,6 +567,10 @@ def main() -> None:
         parser.error("--num-requests must be positive")
     if args.max_num_batched_tokens <= 0:
         parser.error("--max-num-batched-tokens must be positive")
+    if args.max_num_seqs <= 0:
+        parser.error("--max-num-seqs must be positive")
+    if args.max_inflight_gib <= 0:
+        parser.error("--max-inflight-gib must be positive")
     if args.warmup_requests < 0:
         parser.error("--warmup-requests cannot be negative")
     args.sync_port = args.sync_port or args.kv_port + 1000
@@ -512,6 +595,10 @@ def main() -> None:
             args.output_dir, args.run_label)
         if os.path.exists(args.compression_stats_path):
             os.remove(args.compression_stats_path)
+    args.transport_stats_path = _transport_stats_path(
+        args.output_dir, args.run_label, args.role)
+    if os.path.exists(args.transport_stats_path):
+        os.remove(args.transport_stats_path)
 
     max_prompt_tokens = max(1, int(args.max_model_len) - 128)
     prompts = build_prompts(
@@ -537,6 +624,11 @@ def main() -> None:
     print(f"  Config           : {args.compression_config or '<mode profile>'}")
     print(f"  Requests         : {len(prompts)}")
     print(f"  Warmup requests  : {len(warmup_prompts)} (excluded from timing)")
+    print(f"  Batched tokens   : {args.max_num_batched_tokens}")
+    print(f"  Max sequences    : {args.max_num_seqs}")
+    print(
+        f"  Async send       : {args.async_send} "
+        f"(limit={args.max_inflight_gib:.2f} GiB)")
     print(f"  Prefix           : {args.transfer_prefix}")
     print("=" * 64 + "\n", flush=True)
 

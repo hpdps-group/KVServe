@@ -141,6 +141,19 @@ class CompressedKVConnector(KVConnectorBase_V1):
         cfg = vllm_config.kv_transfer_config
         self.is_producer = cfg.is_kv_producer
         self._block_size = vllm_config.cache_config.block_size
+        self._async_send = (
+            os.environ.get("KVSERVE_ASYNC_SEND", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        try:
+            self._max_inflight_bytes = int(
+                os.environ.get(
+                    "KVSERVE_MAX_INFLIGHT_BYTES",
+                    str(4 * 1024 * 1024 * 1024),
+                )
+            )
+        except ValueError:
+            self._max_inflight_bytes = 4 * 1024 * 1024 * 1024
 
         # SCHEDULER side: consumer tracks which requests need KV load
         self._requests_need_load: dict[str, tuple["Request", list[int]]] = {}
@@ -193,6 +206,11 @@ class CompressedKVConnector(KVConnectorBase_V1):
                 "local_rank=%d tp_rank=%d tp_size=%d compression=%s",
                 self.is_producer, local_rank, tp_rank, tp_size,
                 "enabled" if self._compression_cfg else "disabled")
+            if self.is_producer and self._async_send:
+                logger.info(
+                    "[CompressedKVConnector] bounded async send enabled: "
+                    "max_inflight_bytes=%d",
+                    self._max_inflight_bytes)
 
     @classmethod
     def get_required_kvcache_layout(cls, vllm_config: "VllmConfig") -> str | None:
@@ -412,12 +430,28 @@ class CompressedKVConnector(KVConnectorBase_V1):
             logger.debug("[Connector] Sent raw KV for %s (%d layers)",
                          rid, len(layer_names))
 
-        self._transport.wait_for_sent()
+        if self._async_send:
+            wait_s = self._transport.wait_for_below(
+                self._max_inflight_bytes)
+            if wait_s > 0.001:
+                logger.info(
+                    "[Connector] async send backpressure %.3f ms "
+                    "(pending_bytes=%d limit=%d)",
+                    wait_s * 1e3,
+                    self._transport.pending_bytes(),
+                    self._max_inflight_bytes)
+        else:
+            self._transport.wait_for_sent()
 
     def get_finished(
         self, finished_req_ids: set[str]
     ) -> tuple[Optional[set[str]], Optional[set[str]]]:
         return None, None
+
+    def shutdown(self) -> None:
+        transport = getattr(self, "_transport", None)
+        if self.is_producer and transport is not None:
+            transport.wait_for_sent()
 
     # ── Scheduler-side ─────────────────────────────────────────────────────
 
