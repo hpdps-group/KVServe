@@ -19,6 +19,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--role", choices=["prefill", "decode"], required=True)
     parser.add_argument("--gpus", default="0,1")
+    parser.add_argument(
+        "--gpu-groups",
+        default=None,
+        help=(
+            "Semicolon-separated TP groups, e.g. '0,1' for one TP=2 replica "
+            "or '0,1;2,3' for two TP=2 replicas. Overrides --gpus."
+        ),
+    )
     parser.add_argument("--kv-ip", required=True)
     parser.add_argument("--base-kv-port", type=int, default=25400)
     parser.add_argument("--base-sync-port", type=int, default=26400)
@@ -49,9 +57,17 @@ def main() -> int:
     test = root / "tests" / "test_kvserve_remote.py"
     if not test.exists():
         parser.error(f"missing benchmark: {test}")
-    gpus = [gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()]
-    if not gpus:
-        parser.error("--gpus must contain at least one GPU")
+    if args.gpu_groups:
+        gpu_groups = [
+            group.strip() for group in args.gpu_groups.split(";")
+            if group.strip()
+        ]
+    else:
+        gpu_groups = [
+            gpu.strip() for gpu in args.gpus.split(",") if gpu.strip()
+        ]
+    if not gpu_groups:
+        parser.error("--gpus/--gpu-groups must contain at least one GPU")
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -72,7 +88,7 @@ def main() -> int:
     env.pop("NCCL_IB_GID_INDEX", None)
 
     processes = []
-    for index, gpu in enumerate(gpus):
+    for index, gpu_group in enumerate(gpu_groups):
         label = f"{args.run_label}_s{index}"
         replica_out = out / f"{label}_{args.role}"
         replica_out.mkdir(parents=True, exist_ok=True)
@@ -80,7 +96,7 @@ def main() -> int:
             sys.executable,
             str(test),
             "--role", args.role,
-            "--gpus", gpu,
+            "--gpus", gpu_group,
             "--kv-ip", args.kv_ip,
             "--kv-port", str(args.base_kv_port + index),
             "--sync-port", str(args.base_sync_port + index),
@@ -107,7 +123,7 @@ def main() -> int:
             cmd.append("--async-send")
         log_path = out / f"{label}_{args.role}.log"
         log = log_path.open("w", encoding="utf-8")
-        print(f"[launch] gpu={gpu} log={log_path}", flush=True)
+        print(f"[launch] gpus={gpu_group} log={log_path}", flush=True)
         process = subprocess.Popen(
             cmd,
             cwd=root,
