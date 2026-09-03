@@ -1,0 +1,573 @@
+{
+  "library_metadata": {
+    "model_name": "Llama-3.1-8B-Instruct",
+    "dataset": "gsm8k",
+    "machine": "6000P",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 7,
+    "num_raw_profiles": 22,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 9,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.2,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.3531,
+            "harmonic_speed_mbps": 80456.35626814491,
+            "critical_bandwidth_mbps": 65426.493895287145,
+            "encode_speed_mbps": 80456.35626814491,
+            "decode_speed_mbps": 80456.35626814491
+          },
+          "quality_metrics": {
+            "accuracy": 0.9843000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c0",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 0,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.2,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.9493,
+            "harmonic_speed_mbps": 75444.11230303445,
+            "critical_bandwidth_mbps": 64587.750899290986,
+            "encode_speed_mbps": 75444.11230303445,
+            "decode_speed_mbps": 75444.11230303445
+          },
+          "quality_metrics": {
+            "accuracy": 0.9843000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c2",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 2,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.8,
+              "high_key_max_value": 6,
+              "high_value_max_value": 12,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.4892,
+            "harmonic_speed_mbps": 54670.178398214135,
+            "critical_bandwidth_mbps": 48230.2101564229,
+            "encode_speed_mbps": 54670.178398214135,
+            "decode_speed_mbps": 54670.178398214135
+          },
+          "quality_metrics": {
+            "accuracy": 0.9739,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.5284328113324635e-05
+          ],
+          "B_range_mbps": [
+            null,
+            65426.494
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c0"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.5284328113324635e-05,
+            1.5482811927593804e-05
+          ],
+          "B_range_mbps": [
+            65426.494,
+            64587.751
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c0"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.5482811927593804e-05,
+            2.073389265269101e-05
+          ],
+          "B_range_mbps": [
+            64587.751,
+            48230.21
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c0",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c9",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c0",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c2"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.073389265269101e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            48230.21,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c2",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c0",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c2"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 6
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 20,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.0973,
+            "harmonic_speed_mbps": 108916.25763060409,
+            "critical_bandwidth_mbps": 82333.81123160863,
+            "encode_speed_mbps": 108916.25763060409,
+            "decode_speed_mbps": 108916.25763060409
+          },
+          "quality_metrics": {
+            "accuracy": 0.9954999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c18",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 18,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.97,
+            "harmonic_speed_mbps": 99928.93261687379,
+            "critical_bandwidth_mbps": 79822.50754305613,
+            "encode_speed_mbps": 99928.93261687379,
+            "decode_speed_mbps": 99928.93261687379
+          },
+          "quality_metrics": {
+            "accuracy": 0.9954999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c4",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 4,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 7.8159,
+            "harmonic_speed_mbps": 54670.178398214135,
+            "critical_bandwidth_mbps": 47675.43967353571,
+            "encode_speed_mbps": 54670.178398214135,
+            "decode_speed_mbps": 54670.178398214135
+          },
+          "quality_metrics": {
+            "accuracy": 0.9974,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c13",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 13,
+            "source": "main:gsm8k.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.8639,
+            "harmonic_speed_mbps": 57254.87424332321,
+            "critical_bandwidth_mbps": 47490.91608521628,
+            "encode_speed_mbps": 57254.87424332321,
+            "decode_speed_mbps": 57254.87424332321
+          },
+          "quality_metrics": {
+            "accuracy": 0.9974,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.2145678489083372e-05
+          ],
+          "B_range_mbps": [
+            null,
+            82333.811
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c18"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.2145678489083372e-05,
+            1.2527794863630433e-05
+          ],
+          "B_range_mbps": [
+            82333.811,
+            79822.508
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c18"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.2527794863630433e-05,
+            2.09751605197066e-05
+          ],
+          "B_range_mbps": [
+            79822.508,
+            47675.44
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c18",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c20",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c18",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c4"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.09751605197066e-05,
+            2.105665846086502e-05
+          ],
+          "B_range_mbps": [
+            47675.44,
+            47490.916
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c4",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c18",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c4",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c13"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            2.105665846086502e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            47490.916,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_gsm8k_6000p_c13",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_gsm8k_6000p_c4",
+            "llama-3-1-8b-instruct_gsm8k_6000p_c13"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 16
+    }
+  ]
+}

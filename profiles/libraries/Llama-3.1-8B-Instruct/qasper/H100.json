@@ -1,0 +1,740 @@
+{
+  "library_metadata": {
+    "model_name": "Llama-3.1-8B-Instruct",
+    "dataset": "qasper",
+    "machine": "H100",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 9,
+    "num_raw_profiles": 32,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.0,
+        0.96
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c0",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 0,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 9.1784,
+            "harmonic_speed_mbps": 58128.58820276596,
+            "critical_bandwidth_mbps": 51795.39415992996,
+            "encode_speed_mbps": 58128.58820276596,
+            "decode_speed_mbps": 58128.58820276596
+          },
+          "quality_metrics": {
+            "accuracy": 0.9593,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c14",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 14,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.0446,
+            "harmonic_speed_mbps": 61169.747110659635,
+            "critical_bandwidth_mbps": 51050.01261860728,
+            "encode_speed_mbps": 61169.747110659635,
+            "decode_speed_mbps": 61169.747110659635
+          },
+          "quality_metrics": {
+            "accuracy": 0.9593,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.9306735979501855e-05
+          ],
+          "B_range_mbps": [
+            null,
+            51795.394
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c14",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c0",
+            "llama-3-1-8b-instruct_qasper_h100_c14"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.9306735979501855e-05,
+            1.958863374767333e-05
+          ],
+          "B_range_mbps": [
+            51795.394,
+            51050.013
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c0",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c0",
+            "llama-3-1-8b-instruct_qasper_h100_c14"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.958863374767333e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            51050.013,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c14",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c0",
+            "llama-3-1-8b-instruct_qasper_h100_c14"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 2
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c6",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 6,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.3029,
+            "harmonic_speed_mbps": 41550.34998236077,
+            "critical_bandwidth_mbps": 37517.47089177843,
+            "encode_speed_mbps": 41550.34998236077,
+            "decode_speed_mbps": 41550.34998236077
+          },
+          "quality_metrics": {
+            "accuracy": 0.9634,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c21",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 21,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 8,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.4126,
+            "harmonic_speed_mbps": 43081.35529242059,
+            "critical_bandwidth_mbps": 36363.12005360629,
+            "encode_speed_mbps": 43081.35529242059,
+            "decode_speed_mbps": 43081.35529242059
+          },
+          "quality_metrics": {
+            "accuracy": 0.9654,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            2.665424870681088e-05
+          ],
+          "B_range_mbps": [
+            null,
+            37517.471
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c21",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c6",
+            "llama-3-1-8b-instruct_qasper_h100_c21"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            2.665424870681088e-05,
+            2.750039046500427e-05
+          ],
+          "B_range_mbps": [
+            37517.471,
+            36363.12
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c6",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c6",
+            "llama-3-1-8b-instruct_qasper_h100_c21"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            2.750039046500427e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            36363.12,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c21",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c6",
+            "llama-3-1-8b-instruct_qasper_h100_c21"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 8
+    },
+    {
+      "bucket_id": 2,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c30",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 30,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.1333,
+            "harmonic_speed_mbps": 83697.37258421298,
+            "critical_bandwidth_mbps": 63447.84494668051,
+            "encode_speed_mbps": 83697.37258421298,
+            "decode_speed_mbps": 83697.37258421298
+          },
+          "quality_metrics": {
+            "accuracy": 1.0272,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c28",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 28,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.26,
+            "harmonic_speed_mbps": 78106.11482430634,
+            "critical_bandwidth_mbps": 63257.0435649325,
+            "encode_speed_mbps": 78106.11482430634,
+            "decode_speed_mbps": 78106.11482430634
+          },
+          "quality_metrics": {
+            "accuracy": 1.0272,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c1",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 1,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 6,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.26,
+            "harmonic_speed_mbps": 58128.58820276596,
+            "critical_bandwidth_mbps": 51091.22885618412,
+            "encode_speed_mbps": 58128.58820276596,
+            "decode_speed_mbps": 58128.58820276596
+          },
+          "quality_metrics": {
+            "accuracy": 0.9947,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c16",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 16,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 12,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.7862,
+            "harmonic_speed_mbps": 61169.747110659635,
+            "critical_bandwidth_mbps": 50598.085724834804,
+            "encode_speed_mbps": 61169.747110659635,
+            "decode_speed_mbps": 61169.747110659635
+          },
+          "quality_metrics": {
+            "accuracy": 0.9978,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_qasper_h100_c10",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 10,
+            "source": "main:qasper.json+H100_Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.8,
+              "high_key_max_value": 16,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 9.1684,
+            "harmonic_speed_mbps": 41550.34998236077,
+            "critical_bandwidth_mbps": 37018.441472439656,
+            "encode_speed_mbps": 41550.34998236077,
+            "decode_speed_mbps": 41550.34998236077
+          },
+          "quality_metrics": {
+            "accuracy": 1.0059,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.5760976607485523e-05
+          ],
+          "B_range_mbps": [
+            null,
+            63447.845
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c30",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c30",
+            "llama-3-1-8b-instruct_qasper_h100_c28"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.5760976607485523e-05,
+            1.580851623224398e-05
+          ],
+          "B_range_mbps": [
+            63447.845,
+            63257.044
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c30",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c30",
+            "llama-3-1-8b-instruct_qasper_h100_c28"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.580851623224398e-05,
+            1.9572831235179014e-05
+          ],
+          "B_range_mbps": [
+            63257.044,
+            51091.229
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c28",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c30",
+            "llama-3-1-8b-instruct_qasper_h100_c28",
+            "llama-3-1-8b-instruct_qasper_h100_c1"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            1.9572831235179014e-05,
+            1.976359353668542e-05
+          ],
+          "B_range_mbps": [
+            51091.229,
+            50598.086
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c1",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c28",
+            "llama-3-1-8b-instruct_qasper_h100_c1",
+            "llama-3-1-8b-instruct_qasper_h100_c16"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            1.976359353668542e-05,
+            2.701356297629394e-05
+          ],
+          "B_range_mbps": [
+            50598.086,
+            37018.441
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c16",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c1",
+            "llama-3-1-8b-instruct_qasper_h100_c16",
+            "llama-3-1-8b-instruct_qasper_h100_c10"
+          ]
+        },
+        {
+          "interval_id": 5,
+          "x_range": [
+            2.701356297629394e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            37018.441,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_qasper_h100_c10",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_qasper_h100_c16",
+            "llama-3-1-8b-instruct_qasper_h100_c10"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 22
+    }
+  ]
+}

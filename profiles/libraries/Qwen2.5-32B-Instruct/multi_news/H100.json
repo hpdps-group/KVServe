@@ -1,0 +1,809 @@
+{
+  "library_metadata": {
+    "model_name": "Qwen2.5-32B-Instruct",
+    "dataset": "multi_news",
+    "machine": "H100",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 10,
+    "num_raw_profiles": 42,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.0,
+        0.96
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c0",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 0,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 11.5919,
+            "harmonic_speed_mbps": 59201.8141516373,
+            "critical_bandwidth_mbps": 54094.64326924207,
+            "encode_speed_mbps": 59201.8141516373,
+            "decode_speed_mbps": 59201.8141516373
+          },
+          "quality_metrics": {
+            "accuracy": 0.9558,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c19",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 19,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 7.5491,
+            "harmonic_speed_mbps": 60710.84261060755,
+            "critical_bandwidth_mbps": 52668.71273941661,
+            "encode_speed_mbps": 60710.84261060755,
+            "decode_speed_mbps": 60710.84261060755
+          },
+          "quality_metrics": {
+            "accuracy": 0.9558,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.8486118764528294e-05
+          ],
+          "B_range_mbps": [
+            null,
+            54094.643
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c19",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c0",
+            "qwen2-5-32b-instruct_multi-news_h100_c19"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.8486118764528294e-05,
+            1.8986604152404364e-05
+          ],
+          "B_range_mbps": [
+            54094.643,
+            52668.713
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c0",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c0",
+            "qwen2-5-32b-instruct_multi-news_h100_c19"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.8986604152404364e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            52668.713,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c19",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c0",
+            "qwen2-5-32b-instruct_multi-news_h100_c19"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 4
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c2",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 2,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 16,
+              "high_value_max_value": 10,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.6235,
+            "harmonic_speed_mbps": 59201.8141516373,
+            "critical_bandwidth_mbps": 53629.091964821535,
+            "encode_speed_mbps": 59201.8141516373,
+            "decode_speed_mbps": 59201.8141516373
+          },
+          "quality_metrics": {
+            "accuracy": 0.9773000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c21",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 21,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 16,
+              "high_value_max_value": 10,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 7.2607,
+            "harmonic_speed_mbps": 60710.84261060755,
+            "critical_bandwidth_mbps": 52349.273807240446,
+            "encode_speed_mbps": 60710.84261060755,
+            "decode_speed_mbps": 60710.84261060755
+          },
+          "quality_metrics": {
+            "accuracy": 0.9773000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c6",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 6,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 5,
+              "high_value_max_value": 5,
+              "low_key_max_value": 4,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 12.657,
+            "harmonic_speed_mbps": 42233.411957564735,
+            "critical_bandwidth_mbps": 38896.64874688569,
+            "encode_speed_mbps": 42233.411957564735,
+            "decode_speed_mbps": 42233.411957564735
+          },
+          "quality_metrics": {
+            "accuracy": 0.9631000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.8646595781557492e-05
+          ],
+          "B_range_mbps": [
+            null,
+            53629.092
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c21",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c2",
+            "qwen2-5-32b-instruct_multi-news_h100_c21",
+            "qwen2-5-32b-instruct_multi-news_h100_c6"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.8646595781557492e-05,
+            1.9102461739625692e-05
+          ],
+          "B_range_mbps": [
+            53629.092,
+            52349.274
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c2",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c2",
+            "qwen2-5-32b-instruct_multi-news_h100_c21"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.9102461739625692e-05,
+            2.5709155729773926e-05
+          ],
+          "B_range_mbps": [
+            52349.274,
+            38896.649
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c21",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c2",
+            "qwen2-5-32b-instruct_multi-news_h100_c21",
+            "qwen2-5-32b-instruct_multi-news_h100_c6"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.5709155729773926e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            38896.649,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c6",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c21",
+            "qwen2-5-32b-instruct_multi-news_h100_c6"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 10
+    },
+    {
+      "bucket_id": 2,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c38",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 38,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.1,
+            "harmonic_speed_mbps": 79946.26898374656,
+            "critical_bandwidth_mbps": 64270.52996732567,
+            "encode_speed_mbps": 79946.26898374656,
+            "decode_speed_mbps": 79946.26898374656
+          },
+          "quality_metrics": {
+            "accuracy": 0.992,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c40",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 40,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.0661,
+            "harmonic_speed_mbps": 82722.91280315134,
+            "critical_bandwidth_mbps": 62378.378039335556,
+            "encode_speed_mbps": 82722.91280315134,
+            "decode_speed_mbps": 82722.91280315134
+          },
+          "quality_metrics": {
+            "accuracy": 0.992,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c3",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 3,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.165,
+            "harmonic_speed_mbps": 59201.8141516373,
+            "critical_bandwidth_mbps": 53377.73012294696,
+            "encode_speed_mbps": 59201.8141516373,
+            "decode_speed_mbps": 59201.8141516373
+          },
+          "quality_metrics": {
+            "accuracy": 0.9961,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c22",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 22,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.7609,
+            "harmonic_speed_mbps": 60710.84261060755,
+            "critical_bandwidth_mbps": 51731.14425526912,
+            "encode_speed_mbps": 60710.84261060755,
+            "decode_speed_mbps": 60710.84261060755
+          },
+          "quality_metrics": {
+            "accuracy": 0.9961,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_multi-news_h100_c10",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "multi_news",
+            "machine": "H100",
+            "config_id": 10,
+            "source": "main:multi_news.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 6,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.7368,
+            "harmonic_speed_mbps": 42233.411957564735,
+            "critical_bandwidth_mbps": 38299.892477126916,
+            "encode_speed_mbps": 42233.411957564735,
+            "decode_speed_mbps": 42233.411957564735
+          },
+          "quality_metrics": {
+            "accuracy": 0.9944,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.555923065374422e-05
+          ],
+          "B_range_mbps": [
+            null,
+            64270.53
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c40",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c38",
+            "qwen2-5-32b-instruct_multi-news_h100_c40",
+            "qwen2-5-32b-instruct_multi-news_h100_c3"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.555923065374422e-05,
+            1.6031195927688342e-05
+          ],
+          "B_range_mbps": [
+            64270.53,
+            62378.378
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c38",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c38",
+            "qwen2-5-32b-instruct_multi-news_h100_c40"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.6031195927688342e-05,
+            1.8734404735770178e-05
+          ],
+          "B_range_mbps": [
+            62378.378,
+            53377.73
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c40",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c38",
+            "qwen2-5-32b-instruct_multi-news_h100_c40",
+            "qwen2-5-32b-instruct_multi-news_h100_c3"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            1.8734404735770178e-05,
+            1.933071487971473e-05
+          ],
+          "B_range_mbps": [
+            53377.73,
+            51731.144
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c3",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c40",
+            "qwen2-5-32b-instruct_multi-news_h100_c3",
+            "qwen2-5-32b-instruct_multi-news_h100_c22"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            1.933071487971473e-05,
+            2.610973387450657e-05
+          ],
+          "B_range_mbps": [
+            51731.144,
+            38299.892
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c22",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c3",
+            "qwen2-5-32b-instruct_multi-news_h100_c22",
+            "qwen2-5-32b-instruct_multi-news_h100_c10"
+          ]
+        },
+        {
+          "interval_id": 5,
+          "x_range": [
+            2.610973387450657e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            38299.892,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_multi-news_h100_c10",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_multi-news_h100_c22",
+            "qwen2-5-32b-instruct_multi-news_h100_c10"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 28
+    }
+  ]
+}

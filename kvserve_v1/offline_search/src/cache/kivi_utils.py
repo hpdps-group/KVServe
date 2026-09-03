@@ -1,10 +1,10 @@
 import torch
 from typing import Optional, Any, List, Tuple, Dict
 from collections import deque
-from transformers.cache_utils import DynamicCache, CacheConfig
+from transformers.cache_utils import DynamicCache
 from hqq.core.quantize import Quantizer as HQQQuantizer
 
-class KIVICacheConfig(CacheConfig):
+class KIVICacheConfig:
     """
     Configuration class for quantized cache settings.
 
@@ -302,7 +302,7 @@ class KIVICache(QuantizedCache):
         ```
     """
 
-    def __init__(self, cache_config: CacheConfig) -> None:
+    def __init__(self, cache_config: KIVICacheConfig) -> None:
         super().__init__(cache_config)
         if self.nbits not in [1, 2, 3, 4, 8]:
             raise ValueError(

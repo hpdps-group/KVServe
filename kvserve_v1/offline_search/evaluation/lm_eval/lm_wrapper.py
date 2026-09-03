@@ -10,9 +10,6 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 from offline_search.src.cache.cache_utils import CustomCacheConfig, CustomCache
-from offline_search.src.cache.kivi_utils import KIVICacheConfig, KIVICache
-from offline_search.src.cache.cachegen_utils import CacheGenCacheConfig, CacheGenCache
-from offline_search.src.cache.duoattn_utils import DuoAttentionCacheConfig, DuoAttentionCache
 
 from offline_search.src.models.modeling_llama import enable_custom_llama_attention
 from offline_search.src.models.modeling_qwen import enable_custom_qwen2_attention
@@ -95,6 +92,7 @@ class CustomLMEval(HFLM):
 
             case "kivi":
                 # KIVI KV Cache from huggingface and KIVI's paper
+                from offline_search.src.cache.kivi_utils import KIVICacheConfig
 
                 self.cache_config = KIVICacheConfig(
                     nbits=kwargs.pop("nbits", 4),
@@ -109,6 +107,7 @@ class CustomLMEval(HFLM):
 
             case "cachegen":
                 # CacheGen KV Cache from it's paper
+                from offline_search.src.cache.cachegen_utils import CacheGenCacheConfig
                 num_layers = getattr(model_config, "num_hidden_layers", getattr(model_config, "n_layer", None))
                 assert num_layers is not None, "Model layers must be provided, check your model's config.json file or set it manually."
                 self.cache_config = CacheGenCacheConfig(
@@ -122,6 +121,8 @@ class CustomLMEval(HFLM):
                 print("\n============== Using cachegen cache config. ==============\n")
 
             case "duoattn":
+                from offline_search.src.cache.duoattn_utils import DuoAttentionCacheConfig
+
                 scores = kwargs.pop("scores", None)
                 assert scores is not None, "Models scores must be provided, check your config."
 
@@ -184,12 +185,18 @@ class CustomLMEval(HFLM):
                 past_key_values = CustomCache(cache_config=self.cache_config)
                 # print("\n============== Using custom past key values. ==============\n")
             case "kivi":
+                from offline_search.src.cache.kivi_utils import KIVICache
+
                 past_key_values = KIVICache(cache_config=self.cache_config)
                 # print("\n============== Using kivi past key values. ==============\n")
             case "cachegen":
+                from offline_search.src.cache.cachegen_utils import CacheGenCache
+
                 past_key_values = CacheGenCache(cache_config=self.cache_config)
                 # print("\n============== Using cachegen past key values. ==============\n")
             case "duoattn":
+                from offline_search.src.cache.duoattn_utils import DuoAttentionCache
+
                 past_key_values = DuoAttentionCache(cache_config=self.cache_config)
                 # print("\n============== Using duoattn past key values. ==============\n")
             case "default":

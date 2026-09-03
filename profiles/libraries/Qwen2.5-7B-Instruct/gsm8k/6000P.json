@@ -1,0 +1,813 @@
+{
+  "library_metadata": {
+    "model_name": "Qwen2.5-7B-Instruct",
+    "dataset": "gsm8k",
+    "machine": "6000P",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 10,
+    "num_raw_profiles": 28,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.0,
+        0.96
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c8",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 8,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 8,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.9302,
+            "harmonic_speed_mbps": 34549.055998724565,
+            "critical_bandwidth_mbps": 30680.267393908933,
+            "encode_speed_mbps": 34549.055998724565,
+            "decode_speed_mbps": 34549.055998724565
+          },
+          "quality_metrics": {
+            "accuracy": 0.9548000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c20",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 20,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 8,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.4747,
+            "harmonic_speed_mbps": 35690.303136847004,
+            "critical_bandwidth_mbps": 30178.03181356608,
+            "encode_speed_mbps": 35690.303136847004,
+            "decode_speed_mbps": 35690.303136847004
+          },
+          "quality_metrics": {
+            "accuracy": 0.9548000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            3.259424004233202e-05
+          ],
+          "B_range_mbps": [
+            null,
+            30680.267
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c20",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c8",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c20"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            3.259424004233202e-05,
+            3.313668718284223e-05
+          ],
+          "B_range_mbps": [
+            30680.267,
+            30178.032
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c8",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c8",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c20"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            3.313668718284223e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            30178.032,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c20",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c8",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c20"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 2
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 12,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.8183,
+            "harmonic_speed_mbps": 54096.77896415008,
+            "critical_bandwidth_mbps": 44799.08393911698,
+            "encode_speed_mbps": 54096.77896415008,
+            "decode_speed_mbps": 54096.77896415008
+          },
+          "quality_metrics": {
+            "accuracy": 0.9732999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c0",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 0,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 7.3688,
+            "harmonic_speed_mbps": 51517.38037601199,
+            "critical_bandwidth_mbps": 44526.09544820665,
+            "encode_speed_mbps": 51517.38037601199,
+            "decode_speed_mbps": 51517.38037601199
+          },
+          "quality_metrics": {
+            "accuracy": 0.9732999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c9",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 9,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 8,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.7342,
+            "harmonic_speed_mbps": 34549.055998724565,
+            "critical_bandwidth_mbps": 30593.449761321644,
+            "encode_speed_mbps": 34549.055998724565,
+            "decode_speed_mbps": 34549.055998724565
+          },
+          "quality_metrics": {
+            "accuracy": 0.9867,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            2.232188500459125e-05
+          ],
+          "B_range_mbps": [
+            null,
+            44799.084
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c0"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            2.232188500459125e-05,
+            2.2458739980091302e-05
+          ],
+          "B_range_mbps": [
+            44799.084,
+            44526.095
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c0"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            2.2458739980091302e-05,
+            3.2686735487550974e-05
+          ],
+          "B_range_mbps": [
+            44526.095,
+            30593.45
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c0",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c12",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c0",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c9"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            3.2686735487550974e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            30593.45,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c9",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c0",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c9"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 6
+    },
+    {
+      "bucket_id": 2,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 26,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.0421,
+            "harmonic_speed_mbps": 80743.73185399304,
+            "critical_bandwidth_mbps": 60768.04301551972,
+            "encode_speed_mbps": 80743.73185399304,
+            "decode_speed_mbps": 80743.73185399304
+          },
+          "quality_metrics": {
+            "accuracy": 1.01,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c24",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 24,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.73,
+            "harmonic_speed_mbps": 75129.2323389839,
+            "critical_bandwidth_mbps": 59245.67370494925,
+            "encode_speed_mbps": 75129.2323389839,
+            "decode_speed_mbps": 75129.2323389839
+          },
+          "quality_metrics": {
+            "accuracy": 1.01,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c2",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 2,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 8,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 7.0274,
+            "harmonic_speed_mbps": 51517.38037601199,
+            "critical_bandwidth_mbps": 44186.44996419368,
+            "encode_speed_mbps": 51517.38037601199,
+            "decode_speed_mbps": 51517.38037601199
+          },
+          "quality_metrics": {
+            "accuracy": 0.9973000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c14",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 14,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 8,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.4005,
+            "harmonic_speed_mbps": 54096.77896415008,
+            "critical_bandwidth_mbps": 44079.78443324552,
+            "encode_speed_mbps": 54096.77896415008,
+            "decode_speed_mbps": 54096.77896415008
+          },
+          "quality_metrics": {
+            "accuracy": 0.9973000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c10",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "gsm8k",
+            "machine": "6000P",
+            "config_id": 10,
+            "source": "main:gsm8k.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 12,
+              "high_value_max_value": 8,
+              "low_key_max_value": 8,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.4504,
+            "harmonic_speed_mbps": 34549.055998724565,
+            "critical_bandwidth_mbps": 30460.603854598303,
+            "encode_speed_mbps": 34549.055998724565,
+            "decode_speed_mbps": 34549.055998724565
+          },
+          "quality_metrics": {
+            "accuracy": 1.0133,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.6456017840571356e-05
+          ],
+          "B_range_mbps": [
+            null,
+            60768.043
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c24"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.6456017840571356e-05,
+            1.6878869585990753e-05
+          ],
+          "B_range_mbps": [
+            60768.043,
+            59245.674
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c24"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.6878869585990753e-05,
+            2.2631372305544938e-05
+          ],
+          "B_range_mbps": [
+            59245.674,
+            44186.45
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c24",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c26",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c24",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c2"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.2631372305544938e-05,
+            2.2686136351560457e-05
+          ],
+          "B_range_mbps": [
+            44186.45,
+            44079.784
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c2",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c24",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c2",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c14"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            2.2686136351560457e-05,
+            3.282929008149131e-05
+          ],
+          "B_range_mbps": [
+            44079.784,
+            30460.604
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c14",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c2",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c14",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c10"
+          ]
+        },
+        {
+          "interval_id": 5,
+          "x_range": [
+            3.282929008149131e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            30460.604,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_gsm8k_6000p_c10",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_gsm8k_6000p_c14",
+            "qwen2-5-7b-instruct_gsm8k_6000p_c10"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 20
+    }
+  ]
+}

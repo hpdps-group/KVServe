@@ -1,0 +1,567 @@
+{
+  "library_metadata": {
+    "model_name": "Llama-3.1-8B-Instruct",
+    "dataset": "humaneval",
+    "machine": "6000P",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 7,
+    "num_raw_profiles": 20,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c18",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 18,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.0042,
+            "harmonic_speed_mbps": 108916.25763060409,
+            "critical_bandwidth_mbps": 81715.75375202557,
+            "encode_speed_mbps": 108916.25763060409,
+            "decode_speed_mbps": 108916.25763060409
+          },
+          "quality_metrics": {
+            "accuracy": 0.9725,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c16",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 16,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.41,
+            "harmonic_speed_mbps": 99928.93261687379,
+            "critical_bandwidth_mbps": 77269.31070828563,
+            "encode_speed_mbps": 99928.93261687379,
+            "decode_speed_mbps": 99928.93261687379
+          },
+          "quality_metrics": {
+            "accuracy": 0.9725,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c8",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 8,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.2,
+              "high_key_max_value": 12,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.9561,
+            "harmonic_speed_mbps": 80456.35626814491,
+            "critical_bandwidth_mbps": 64222.55221492869,
+            "encode_speed_mbps": 80456.35626814491,
+            "decode_speed_mbps": 80456.35626814491
+          },
+          "quality_metrics": {
+            "accuracy": 0.9697,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c0",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 0,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.2,
+              "high_key_max_value": 12,
+              "high_value_max_value": 6,
+              "low_key_max_value": 8,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.6836,
+            "harmonic_speed_mbps": 75444.11230303445,
+            "critical_bandwidth_mbps": 62170.11126442609,
+            "encode_speed_mbps": 75444.11230303445,
+            "decode_speed_mbps": 75444.11230303445
+          },
+          "quality_metrics": {
+            "accuracy": 0.9697,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.2237542384233492e-05
+          ],
+          "B_range_mbps": [
+            null,
+            81715.754
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c18",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c18",
+            "llama-3-1-8b-instruct_humaneval_6000p_c16"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.2237542384233492e-05,
+            1.2941748681766997e-05
+          ],
+          "B_range_mbps": [
+            81715.754,
+            77269.311
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c18",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c18",
+            "llama-3-1-8b-instruct_humaneval_6000p_c16"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.2941748681766997e-05,
+            1.5570854248416923e-05
+          ],
+          "B_range_mbps": [
+            77269.311,
+            64222.552
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c16",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c18",
+            "llama-3-1-8b-instruct_humaneval_6000p_c16",
+            "llama-3-1-8b-instruct_humaneval_6000p_c8"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            1.5570854248416923e-05,
+            1.6084899635240043e-05
+          ],
+          "B_range_mbps": [
+            64222.552,
+            62170.111
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c8",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c16",
+            "llama-3-1-8b-instruct_humaneval_6000p_c8",
+            "llama-3-1-8b-instruct_humaneval_6000p_c0"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            1.6084899635240043e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            62170.111,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c0",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c8",
+            "llama-3-1-8b-instruct_humaneval_6000p_c0"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 6
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c9",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 9,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 8,
+              "high_value_max_value": 10,
+              "low_key_max_value": 4,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.3065,
+            "harmonic_speed_mbps": 80456.35626814491,
+            "critical_bandwidth_mbps": 65294.50641077284,
+            "encode_speed_mbps": 80456.35626814491,
+            "decode_speed_mbps": 80456.35626814491
+          },
+          "quality_metrics": {
+            "accuracy": 1.0,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c1",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 1,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 8,
+              "high_value_max_value": 10,
+              "low_key_max_value": 4,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.6095,
+            "harmonic_speed_mbps": 75444.11230303445,
+            "critical_bandwidth_mbps": 61994.76524838885,
+            "encode_speed_mbps": 75444.11230303445,
+            "decode_speed_mbps": 75444.11230303445
+          },
+          "quality_metrics": {
+            "accuracy": 1.0,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c6",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 6,
+            "source": "main:humaneval.json+6000P-Llama-3.1-8B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.4268,
+            "harmonic_speed_mbps": 54670.178398214135,
+            "critical_bandwidth_mbps": 46163.584385919654,
+            "encode_speed_mbps": 54670.178398214135,
+            "decode_speed_mbps": 54670.178398214135
+          },
+          "quality_metrics": {
+            "accuracy": 1.0303,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.5315224127875657e-05
+          ],
+          "B_range_mbps": [
+            null,
+            65294.506
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c9",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c9",
+            "llama-3-1-8b-instruct_humaneval_6000p_c1"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.5315224127875657e-05,
+            1.6130394171078637e-05
+          ],
+          "B_range_mbps": [
+            65294.506,
+            61994.765
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c9",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c9",
+            "llama-3-1-8b-instruct_humaneval_6000p_c1"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.6130394171078637e-05,
+            2.1662096072093782e-05
+          ],
+          "B_range_mbps": [
+            61994.765,
+            46163.584
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c1",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c9",
+            "llama-3-1-8b-instruct_humaneval_6000p_c1",
+            "llama-3-1-8b-instruct_humaneval_6000p_c6"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.1662096072093782e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            46163.584,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_humaneval_6000p_c6",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_humaneval_6000p_c1",
+            "llama-3-1-8b-instruct_humaneval_6000p_c6"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 14
+    }
+  ]
+}

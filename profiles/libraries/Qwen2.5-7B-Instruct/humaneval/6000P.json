@@ -1,0 +1,494 @@
+{
+  "library_metadata": {
+    "model_name": "Qwen2.5-7B-Instruct",
+    "dataset": "humaneval",
+    "machine": "6000P",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 6,
+    "num_raw_profiles": 28,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c26",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 26,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 3.9575,
+            "harmonic_speed_mbps": 80743.73185399304,
+            "critical_bandwidth_mbps": 60341.020077873516,
+            "encode_speed_mbps": 80743.73185399304,
+            "decode_speed_mbps": 80743.73185399304
+          },
+          "quality_metrics": {
+            "accuracy": 0.9854,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c24",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 24,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.28,
+            "harmonic_speed_mbps": 75129.2323389839,
+            "critical_bandwidth_mbps": 57575.67338127738,
+            "encode_speed_mbps": 75129.2323389839,
+            "decode_speed_mbps": 75129.2323389839
+          },
+          "quality_metrics": {
+            "accuracy": 0.9854,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c12",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 12,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 8,
+              "high_value_max_value": 8,
+              "low_key_max_value": 4,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.8274,
+            "harmonic_speed_mbps": 54096.77896415008,
+            "critical_bandwidth_mbps": 44813.60311142844,
+            "encode_speed_mbps": 54096.77896415008,
+            "decode_speed_mbps": 54096.77896415008
+          },
+          "quality_metrics": {
+            "accuracy": 0.9639,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c1",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 1,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.8625,
+            "harmonic_speed_mbps": 51517.38037601199,
+            "critical_bandwidth_mbps": 44010.2939824219,
+            "encode_speed_mbps": 51517.38037601199,
+            "decode_speed_mbps": 51517.38037601199
+          },
+          "quality_metrics": {
+            "accuracy": 0.9759,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.6572474225815924e-05
+          ],
+          "B_range_mbps": [
+            null,
+            60341.02
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c26",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c26",
+            "qwen2-5-7b-instruct_humaneval_6000p_c24"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.6572474225815924e-05,
+            1.7368446450948202e-05
+          ],
+          "B_range_mbps": [
+            60341.02,
+            57575.673
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c26",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c26",
+            "qwen2-5-7b-instruct_humaneval_6000p_c24"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.7368446450948202e-05,
+            2.2314652930573625e-05
+          ],
+          "B_range_mbps": [
+            57575.673,
+            44813.603
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c24",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c26",
+            "qwen2-5-7b-instruct_humaneval_6000p_c24",
+            "qwen2-5-7b-instruct_humaneval_6000p_c12"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.2314652930573625e-05,
+            2.2721956831267906e-05
+          ],
+          "B_range_mbps": [
+            44813.603,
+            44010.294
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c12",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c24",
+            "qwen2-5-7b-instruct_humaneval_6000p_c12",
+            "qwen2-5-7b-instruct_humaneval_6000p_c1"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            2.2721956831267906e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            44010.294,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c1",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c12",
+            "qwen2-5-7b-instruct_humaneval_6000p_c1"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 14
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c15",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 15,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.4061,
+            "harmonic_speed_mbps": 54096.77896415008,
+            "critical_bandwidth_mbps": 44090.16070622846,
+            "encode_speed_mbps": 54096.77896415008,
+            "decode_speed_mbps": 54096.77896415008
+          },
+          "quality_metrics": {
+            "accuracy": 1.0,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c3",
+          "metadata": {
+            "model_name": "Qwen2.5-7B-Instruct",
+            "dataset": "humaneval",
+            "machine": "6000P",
+            "config_id": 3,
+            "source": "main:humaneval.json+6000P-Qwen2.5-7B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-7B-Instruct",
+              "hybrid_ratio": 0.1,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 6,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.2975,
+            "harmonic_speed_mbps": 51517.38037601199,
+            "critical_bandwidth_mbps": 43336.772138455504,
+            "encode_speed_mbps": 51517.38037601199,
+            "decode_speed_mbps": 51517.38037601199
+          },
+          "quality_metrics": {
+            "accuracy": 1.0,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            2.268079734757541e-05
+          ],
+          "B_range_mbps": [
+            null,
+            44090.161
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c15",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c15",
+            "qwen2-5-7b-instruct_humaneval_6000p_c3"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            2.268079734757541e-05,
+            2.307509190590214e-05
+          ],
+          "B_range_mbps": [
+            44090.161,
+            43336.772
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c15",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c15",
+            "qwen2-5-7b-instruct_humaneval_6000p_c3"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            2.307509190590214e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            43336.772,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-7b-instruct_humaneval_6000p_c3",
+          "candidate_profile_ids": [
+            "qwen2-5-7b-instruct_humaneval_6000p_c15",
+            "qwen2-5-7b-instruct_humaneval_6000p_c3"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 14
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "track": "C1",
+  "description": "Cross-machine PD: 2 concurrent streams on GPU0/GPU1, 10 HotpotQA req each, none vs default.",
+  "model": "/data/models/Qwen2.5-7B-Instruct",
+  "dataset": "datasets/hotpotqa_ae.jsonl",
+  "parallel_pairs": 2,
+  "num_requests": 10,
+  "warmup_requests": 1,
+  "modes": ["none", "default"],
+  "max_tokens": 1,
+  "max_model_len": 20480,
+  "max_num_batched_tokens": 20480,
+  "max_prompt_chars": 0,
+  "max_num_seqs": 1,
+  "gpu_mem_util": 0.6,
+  "kv_buffer_gib": 2.0,
+  "kv_port": 25210,
+  "sync_port": 26210,
+  "sync_timeout_s": 1200,
+  "decode_host": "10.60.14.2",
+  "decode_ssh": "aec@10.60.14.2",
+  "prefill_container": "sigcomm-ae",
+  "decode_container": "sigcomm-ae",
+  "gpus": {
+    "prefill": "0,1",
+    "decode": "0,1"
+  },
+  "ib_device": "mlx5_0"
+}

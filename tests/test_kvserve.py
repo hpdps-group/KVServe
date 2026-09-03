@@ -50,7 +50,11 @@ _DEFAULT_LC_META = os.path.join(
 
 CUSTOM_COMPRESSION_CFG = {
     "enabled": True,
-    "pipeline": ["quantizer", "codec"],
+    "pipeline": ["transformer", "quantizer", "codec"],
+    "transformer_config": {
+        "transform_type": "hadamard",
+        "seed": 0x3333,
+    },
     "quantizer_config": {
         "model_name": "Qwen2.5-7B-Instruct",
         "hybrid_ratio": 0.5,
@@ -684,6 +688,8 @@ def main():
                         help="Max new tokens per decode request")
     parser.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN,
                         help="vLLM max_model_len / prompt token cap")
+    parser.add_argument("--max-prompt-chars", type=int, default=MAX_PROMPT_CHARS,
+                        help="Char cap before tokenization. 0 disables char truncation.")
     parser.add_argument(
         "--max-num-batched-tokens",
         type=int,
@@ -801,7 +807,7 @@ def main():
         args.lmeval_task,
         args.num_requests,
         offline=not args.online,
-        max_prompt_chars=MAX_PROMPT_CHARS,
+        max_prompt_chars=args.max_prompt_chars,
         data_path=args.data_path,
         max_prompt_tokens=max_prompt_tokens,
     )
@@ -848,6 +854,7 @@ def main():
         compression_stats_path = _compression_stats_path(args.output_dir, mode_label)
         if os.path.exists(compression_stats_path):
             os.remove(compression_stats_path)
+        os.environ["KVSERVE_COMPRESSION_STATS_PATH"] = compression_stats_path
     else:
         mode_label = args.mode
 
@@ -929,10 +936,15 @@ def main():
                           flush=True)
                 break
 
+    # The workers own vLLM engine processes and normally need a short grace
+    # period to shut them down. Terminating them immediately after receiving
+    # the result leaks multiprocessing semaphores and can make interpreter exit
+    # noticeably slow. Escalate only when graceful shutdown times out.
     for proc in (p_prefill, p_decode):
+        proc.join(timeout=15)
         if proc.is_alive():
             proc.terminate()
-        proc.join(timeout=10)
+            proc.join(timeout=10)
         if proc.is_alive():
             proc.kill()
             proc.join(timeout=5)

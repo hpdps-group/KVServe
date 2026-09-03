@@ -1,0 +1,16 @@
+{
+  "compression_ratio_gt": 1.0,
+  "shape_match": true,
+  "decode_succeeds": true,
+  "controller_profile_order": [
+    "qwen25-7b_ae_A",
+    "qwen25-7b_ae_B",
+    "qwen25-7b_ae_C",
+    "qwen25-7b_ae_D"
+  ],
+  "ttft_order_kv_reuse": [
+    "kvserve_compressed_kv",
+    "remote_uncompressed_kv",
+    "cold_prefill"
+  ]
+}

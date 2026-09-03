@@ -1,0 +1,22 @@
+# KVServe SIGCOMM AE runtime.
+#
+# On 5090-3060 we do not rebuild this file. The lab container `sigcomm-ae` is
+# a thin `docker run` of the existing `kvserve-env:v2` image. See
+# ae/ENVIRONMENT.md.
+#
+# This file is the reviewer-facing equivalent: same Python stack, no extra
+# lab tools. setup.sh will complete any remaining AE pip deps.
+
+FROM kvserve-env:v2
+
+WORKDIR /workspace
+ENV PYTHONPATH=/workspace \
+    HF_HOME=/root/.cache/huggingface \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+COPY requirements-ae.txt /tmp/requirements-ae.txt
+# Intentionally not pip-installing here on the lab machine.
+# Reviewer image build can uncomment:
+# RUN /opt/kvs-venv/bin/pip install --no-cache-dir -r /tmp/requirements-ae.txt
+
+CMD ["/bin/bash"]

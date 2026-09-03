@@ -1,0 +1,25 @@
+{
+  "enabled": true,
+  "pipeline": ["transformer", "quantizer", "codec"],
+  "transformer_config": {
+    "transform_type": "hadamard",
+    "seed": 13107
+  },
+  "quantizer_config": {
+    "model_name": "Qwen2.5-7B-Instruct",
+    "hybrid_ratio": 0.5,
+    "high_key_max_value": 12,
+    "high_value_max_value": 8,
+    "low_key_max_value": 6,
+    "low_value_max_value": 4,
+    "axis_key": "channel",
+    "axis_value": "token",
+    "split_type": "head"
+  },
+  "codec_config": {
+    "codec_type": "nvcomp",
+    "nvcomp_algorithm": "ANS",
+    "data_type": "|u1"
+  },
+  "min_compress_size": 0
+}

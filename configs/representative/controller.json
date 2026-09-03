@@ -1,0 +1,18 @@
+{
+  "track": "B3",
+  "description": "CPU-only online controller: a few representative decisions.",
+  "model_name": "Qwen2.5-7B-Instruct",
+  "dataset": "qasper",
+  "machine": "5090",
+  "input_length": 1024,
+  "t_model_ms": 5,
+  "bandwidth_cases": [
+    {"gbps": 5},
+    {"gbps": 25},
+    {"gbps": 150}
+  ],
+  "constraints": {
+    "acc_req": 0.97,
+    "slo_ms": 200
+  }
+}

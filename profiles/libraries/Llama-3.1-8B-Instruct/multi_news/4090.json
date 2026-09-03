@@ -1,0 +1,400 @@
+{
+  "library_metadata": {
+    "model_name": "Llama-3.1-8B-Instruct",
+    "dataset": "multi_news",
+    "machine": "4090",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 5,
+    "num_raw_profiles": 24,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "llama-3-1-8b-instruct_multi-news_4090_c22",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "multi_news",
+            "machine": "4090",
+            "config_id": 22,
+            "source": "main:multi_news.json+4090_Llama-3.1-8B-Instruct_speed(2).csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.1125,
+            "harmonic_speed_mbps": 56584.162805930355,
+            "critical_bandwidth_mbps": 42825.09586223908,
+            "encode_speed_mbps": 56584.162805930355,
+            "decode_speed_mbps": 56584.162805930355
+          },
+          "quality_metrics": {
+            "accuracy": 0.9954999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_multi-news_4090_c20",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "multi_news",
+            "machine": "4090",
+            "config_id": 20,
+            "source": "main:multi_news.json+4090_Llama-3.1-8B-Instruct_speed(2).csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.12,
+            "harmonic_speed_mbps": 51804.63626481872,
+            "critical_bandwidth_mbps": 41686.543244346314,
+            "encode_speed_mbps": 51804.63626481872,
+            "decode_speed_mbps": 51804.63626481872
+          },
+          "quality_metrics": {
+            "accuracy": 0.9954999999999999,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_multi-news_4090_c10",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "multi_news",
+            "machine": "4090",
+            "config_id": 10,
+            "source": "main:multi_news.json+4090_Llama-3.1-8B-Instruct_speed(2).csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.4871,
+            "harmonic_speed_mbps": 33485.35423323866,
+            "critical_bandwidth_mbps": 28323.517012718137,
+            "encode_speed_mbps": 33485.35423323866,
+            "decode_speed_mbps": 33485.35423323866
+          },
+          "quality_metrics": {
+            "accuracy": 1.003,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_multi-news_4090_c0",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "multi_news",
+            "machine": "4090",
+            "config_id": 0,
+            "source": "main:multi_news.json+4090_Llama-3.1-8B-Instruct_speed(2).csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 6,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 8.9753,
+            "harmonic_speed_mbps": 31751.772863881604,
+            "critical_bandwidth_mbps": 28214.089124744016,
+            "encode_speed_mbps": 31751.772863881604,
+            "decode_speed_mbps": 31751.772863881604
+          },
+          "quality_metrics": {
+            "accuracy": 1.003,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "llama-3-1-8b-instruct_multi-news_4090_c5",
+          "metadata": {
+            "model_name": "Llama-3.1-8B-Instruct",
+            "dataset": "multi_news",
+            "machine": "4090",
+            "config_id": 5,
+            "source": "main:multi_news.json+4090_Llama-3.1-8B-Instruct_speed(2).csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Llama-3.1-8B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 6,
+              "high_value_max_value": 8,
+              "low_key_max_value": 4,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.8807,
+            "harmonic_speed_mbps": 23219.83434760707,
+            "critical_bandwidth_mbps": 21085.795696821082,
+            "encode_speed_mbps": 23219.83434760707,
+            "decode_speed_mbps": 23219.83434760707
+          },
+          "quality_metrics": {
+            "accuracy": 1.0011,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            2.335079419826232e-05
+          ],
+          "B_range_mbps": [
+            null,
+            42825.096
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c22",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c22",
+            "llama-3-1-8b-instruct_multi-news_4090_c20"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            2.335079419826232e-05,
+            2.398855655021537e-05
+          ],
+          "B_range_mbps": [
+            42825.096,
+            41686.543
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c22",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c22",
+            "llama-3-1-8b-instruct_multi-news_4090_c20"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            2.398855655021537e-05,
+            3.530634982763507e-05
+          ],
+          "B_range_mbps": [
+            41686.543,
+            28323.517
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c20",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c22",
+            "llama-3-1-8b-instruct_multi-news_4090_c20",
+            "llama-3-1-8b-instruct_multi-news_4090_c10"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            3.530634982763507e-05,
+            3.5443284933944256e-05
+          ],
+          "B_range_mbps": [
+            28323.517,
+            28214.089
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c10",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c20",
+            "llama-3-1-8b-instruct_multi-news_4090_c10",
+            "llama-3-1-8b-instruct_multi-news_4090_c0"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            3.5443284933944256e-05,
+            4.7425291147573865e-05
+          ],
+          "B_range_mbps": [
+            28214.089,
+            21085.796
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c0",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c10",
+            "llama-3-1-8b-instruct_multi-news_4090_c0",
+            "llama-3-1-8b-instruct_multi-news_4090_c5"
+          ]
+        },
+        {
+          "interval_id": 5,
+          "x_range": [
+            4.7425291147573865e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            21085.796,
+            0.0
+          ],
+          "model_optimal_profile_id": "llama-3-1-8b-instruct_multi-news_4090_c5",
+          "candidate_profile_ids": [
+            "llama-3-1-8b-instruct_multi-news_4090_c0",
+            "llama-3-1-8b-instruct_multi-news_4090_c5"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 24
+    }
+  ]
+}

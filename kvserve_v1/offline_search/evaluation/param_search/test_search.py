@@ -1,7 +1,9 @@
 import itertools
 import ast
+import argparse
 import logging
 import json
+import time
 import numpy as np
 import pandas as pd
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -12,13 +14,10 @@ import warnings
 import sys
 import os
 import io
-import torch
 import gc
 from contextlib import redirect_stdout, redirect_stderr
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
-from offline_search.evaluation.param_search.cr_evaluator import CompressionEvaluator
-from offline_search.evaluation.param_search.acc_evaluator import AccuracyEvaluator
 
 # ================= Configuration =================
 
@@ -28,6 +27,7 @@ ACC_TOLERANCE = 3
 TARGET_ACC_THRESHOLD = BASELINE_ACC - ACC_TOLERANCE
 PRUNING_EPSILON = 0.2
 MAX_ITER = 5
+COLD_START_POINTS = 3
 EXPLORATION_WEIGHT = 1
 SEED = 42
 WHETHER_TO_EXPLORE = True
@@ -48,8 +48,101 @@ DATASET_LIMIT = 5
 BATCH_SIZE = 2
 CACHE_CSV_PATH = "search_space.csv"
 FINAL_JSON_PATH = f"tolerance_{ACC_TOLERANCE}_results.json"
-BASE_MODEL_PATH = "/root/data/models"
-BASE_CONFIG_PATH = "../../duo_config"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_MODEL_PATH = "/data/models"
+BASE_CONFIG_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "duo_config"))
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
+CR_CACHE_PATH = None
+ATTN_IMPLEMENTATION = "sdpa"
+EVALUATION_MODE = "model"
+
+
+def configure_from_cli(argv=None):
+    """Load the small set of runtime knobs used by the AE entrypoint."""
+    parser = argparse.ArgumentParser(description="KVServe offline compression-parameter search")
+    parser.add_argument("--config", help="JSON search configuration")
+    parser.add_argument("--results-dir", help="Override the output directory")
+    args = parser.parse_args(argv)
+
+    config = {}
+    if args.config:
+        config_path = os.path.abspath(args.config)
+        with open(config_path, encoding="utf-8") as handle:
+            config = json.load(handle)
+
+    global MODEL_NAME, TASK_TO_SEARCH, DATASET_LIMIT, BATCH_SIZE
+    global MAX_ITER, COLD_START_POINTS, ACC_TOLERANCE, TARGET_ACC_THRESHOLD, SEED
+    global BASE_MODEL_PATH, BASE_CONFIG_PATH, RESULTS_DIR, CR_CACHE_PATH
+    global CACHE_CSV_PATH, FINAL_JSON_PATH, ATTN_IMPLEMENTATION, EVALUATION_MODE
+
+    model_path = config.get("model_path")
+    if model_path:
+        model_path = os.path.abspath(model_path)
+        configured_name = config.get("model_name", os.path.basename(model_path.rstrip(os.sep)))
+        if os.path.basename(model_path.rstrip(os.sep)) != configured_name:
+            raise ValueError("model_path basename must match model_name")
+        MODEL_NAME = configured_name
+        BASE_MODEL_PATH = os.path.dirname(model_path.rstrip(os.sep))
+    else:
+        MODEL_NAME = config.get("model_name", MODEL_NAME)
+        BASE_MODEL_PATH = os.path.abspath(config.get("base_model_path", BASE_MODEL_PATH))
+
+    tasks = config.get("tasks", config.get("workloads", TASK_TO_SEARCH))
+    TASK_TO_SEARCH = [tasks] if isinstance(tasks, str) else list(tasks)
+    DATASET_LIMIT = int(config.get("dataset_limit", DATASET_LIMIT))
+    BATCH_SIZE = int(config.get("batch_size", BATCH_SIZE))
+    MAX_ITER = int(config.get("max_iter", MAX_ITER))
+    COLD_START_POINTS = int(config.get("cold_start_points", COLD_START_POINTS))
+    ACC_TOLERANCE = float(config.get("acc_tolerance", ACC_TOLERANCE))
+    TARGET_ACC_THRESHOLD = BASELINE_ACC - ACC_TOLERANCE
+    SEED = int(config.get("seed", SEED))
+    BASE_CONFIG_PATH = os.path.abspath(config.get("base_config_path", BASE_CONFIG_PATH))
+    RESULTS_DIR = os.path.abspath(args.results_dir or config.get("output", RESULTS_DIR))
+    CR_CACHE_PATH = config.get("cr_cache_path")
+    if CR_CACHE_PATH:
+        CR_CACHE_PATH = os.path.abspath(CR_CACHE_PATH)
+    CACHE_CSV_PATH = config.get("cache_csv", CACHE_CSV_PATH)
+    FINAL_JSON_PATH = config.get("final_json", f"tolerance_{ACC_TOLERANCE:g}_results.json")
+    ATTN_IMPLEMENTATION = config.get("attn_implementation", ATTN_IMPLEMENTATION)
+    EVALUATION_MODE = config.get("evaluation_mode", EVALUATION_MODE)
+
+    model_dir = os.path.join(BASE_MODEL_PATH, MODEL_NAME)
+    scores_path = os.path.join(BASE_CONFIG_PATH, f"{MODEL_NAME}_scores.csv")
+    if EVALUATION_MODE not in {"smoke", "model"}:
+        raise ValueError("evaluation_mode must be 'smoke' or 'model'")
+    if EVALUATION_MODE == "model":
+        if not os.path.isfile(os.path.join(model_dir, "config.json")):
+            raise FileNotFoundError(f"Model not found: {model_dir}")
+        if not os.path.isfile(scores_path):
+            raise FileNotFoundError(f"Head-score file not found: {scores_path}")
+    if DATASET_LIMIT < 1 or BATCH_SIZE < 1 or MAX_ITER < 0 or COLD_START_POINTS < 1:
+        raise ValueError(
+            "dataset_limit, batch_size, and cold_start_points must be positive; "
+            "max_iter must be non-negative"
+        )
+
+
+def model_results_dir():
+    return os.path.join(RESULTS_DIR, MODEL_NAME)
+
+
+def cr_cache_path():
+    return CR_CACHE_PATH or os.path.join(model_results_dir(), CACHE_CSV_PATH)
+
+
+class SmokeAccuracyEvaluator:
+    """Fast deterministic proxy used only to exercise the search controller."""
+
+    def evaluate(self, params):
+        # Produce a smooth decision boundary with both feasible and infeasible
+        # candidates.  This is intentionally not a measured model accuracy.
+        accuracy = (
+            101.2
+            - 0.45 * float(params["cr"])
+            - 0.25 * float(params["heads_selection"])
+            + 0.04 * (float(params["low_key_max_value"]) + float(params["low_value_max_value"]))
+        )
+        return round(float(np.clip(accuracy, 0.0, 100.0)), 2)
 
 # ================= Utilities =================
 
@@ -86,7 +179,7 @@ def run_cr(evaluator, params):
         return cr
     except Exception as e:
         logging.error(f"Error running CR evaluation: {e}")
-        return 0.0
+        raise
 
 def run_acc(evaluator, params):
     logging.info(f"   >>> Running Accuracy Evaluation ")
@@ -96,7 +189,7 @@ def run_acc(evaluator, params):
         return acc
     except Exception as e:
         logging.error(f"Error running ACC evaluation: {e}")
-        return 0.0
+        raise
 
 def bigger_pruning_select_by(df, current_params, current_idx, current_iteration, isolation_columns):
     if current_iteration < MAX_ITER / 5:
@@ -305,6 +398,8 @@ class ConstraintAwareBO:
 # ================= Main Flow =================
 
 def main():
+    configure_from_cli()
+    started_at = time.monotonic()
     # ====================================================
     # Logging Config
     # ====================================================
@@ -318,6 +413,13 @@ def main():
     logging.getLogger("datasets").setLevel(logging.ERROR)
     logging.getLogger("lm_eval").setLevel(logging.ERROR)
 
+    logging.info(
+        "Search setup: mode=%s model=%s candidates=CR-cache cold_start=%d bo_iter=%d",
+        EVALUATION_MODE, MODEL_NAME, COLD_START_POINTS, MAX_ITER,
+    )
+    if EVALUATION_MODE == "smoke":
+        logging.info("Smoke mode uses deterministic proxy accuracy; it does not produce measured profiles.")
+
     logging.info("=== Phase 1: Generating & Profiling Search Space ===")
     
     keys = ["transform_type", "heads_selection", "high_key_max_value", "high_value_max_value", "low_key_max_value", "low_value_max_value", "axis_key", "axis_value"]
@@ -328,16 +430,18 @@ def main():
     df_all_configs = pd.DataFrame(valid_data)
 
     if df_all_configs.empty:
-        logging.error("Error: No valid configurations generated from search space.")
-        return
+        raise RuntimeError("No valid configurations generated from search space")
 
     df_to_evaluate = df_all_configs
     df_cached = pd.DataFrame()
 
-    if os.path.exists(f"results/{MODEL_NAME}/{CACHE_CSV_PATH}"):
+    source_cache_path = cr_cache_path()
+    if EVALUATION_MODE == "smoke" and not os.path.isfile(source_cache_path):
+        raise FileNotFoundError(f"Smoke mode requires a precomputed CR cache: {source_cache_path}")
+    if os.path.exists(source_cache_path):
         try:
-            logging.info(f"Found cache: results/{MODEL_NAME}/{CACHE_CSV_PATH}. Loading cached CR values.")
-            df_cache = pd.read_csv(f"results/{MODEL_NAME}/{CACHE_CSV_PATH}")
+            logging.info(f"Found CR cache: {source_cache_path}")
+            df_cache = pd.read_csv(source_cache_path)
             
             # Ensure tuple columns from CSV (read as strings) are converted back to tuples
             for col in ['axis_key', 'axis_value']:
@@ -360,12 +464,15 @@ def main():
             logging.info(f"{len(df_cached)} configs found in cache. {len(df_to_evaluate)} new configs to evaluate.")
             
         except Exception as e:
-            logging.warning(f"Could not load or parse cache file 'results/{MODEL_NAME}/{CACHE_CSV_PATH}'. Re-evaluating all. Error: {e}")
+            logging.warning(f"Could not load or parse CR cache '{source_cache_path}'. Re-evaluating all. Error: {e}")
             df_to_evaluate = df_all_configs
             df_cached = pd.DataFrame()
     
     df_newly_evaluated = pd.DataFrame()
     if not df_to_evaluate.empty:
+        import torch
+        from offline_search.evaluation.param_search.cr_evaluator import CompressionEvaluator
+
         logging.info(f"Evaluating CR for {len(df_to_evaluate)} configurations...")
         logging.info("=== Initializing Compression Evaluator ===")
         cr_evaluator = silent_call(
@@ -394,31 +501,38 @@ def main():
         df_save = df_newly_evaluated[df_newly_evaluated['cr'] > 0].copy()
         if not df_save.empty:
             save_cols = keys + ['cr']
-            os.makedirs(f"results/{MODEL_NAME}", exist_ok=True)
-            file_exists = os.path.exists(f"results/{MODEL_NAME}/{CACHE_CSV_PATH}")
-            df_save[save_cols].to_csv(f"results/{MODEL_NAME}/{CACHE_CSV_PATH}", mode='a', index=False, header=not file_exists)
-            logging.info(f"Appended {len(df_save)} new configurations to results/{MODEL_NAME}/{CACHE_CSV_PATH}")
+            os.makedirs(model_results_dir(), exist_ok=True)
+            local_cache_path = os.path.join(model_results_dir(), CACHE_CSV_PATH)
+            file_exists = os.path.exists(local_cache_path)
+            df_save[save_cols].to_csv(local_cache_path, mode='a', index=False, header=not file_exists)
+            logging.info(f"Appended {len(df_save)} new configurations to {local_cache_path}")
             # return
 
     # Combine cached and newly evaluated results
     df = pd.concat([df_cached, df_newly_evaluated], ignore_index=True)
 
-    logging.info("=== Initializing Accuracy Evaluator ===")
-    acc_evaluator = silent_call(
-        AccuracyEvaluator,
-        model_name=MODEL_NAME,
-        tasks=TASK_TO_SEARCH,
-        limit=DATASET_LIMIT,
-        batch_size=BATCH_SIZE,
-        random_seed=SEED,
-        base_model_path=BASE_MODEL_PATH,
-        base_config_path=BASE_CONFIG_PATH,
-    )
+    if EVALUATION_MODE == "smoke":
+        logging.info("=== Initializing Deterministic Accuracy Proxy ===")
+        acc_evaluator = SmokeAccuracyEvaluator()
+    else:
+        logging.info("=== Initializing Model Accuracy Evaluator ===")
+        from offline_search.evaluation.param_search.acc_evaluator import AccuracyEvaluator
+
+        acc_evaluator = silent_call(
+            AccuracyEvaluator,
+            model_name=MODEL_NAME,
+            tasks=TASK_TO_SEARCH,
+            limit=DATASET_LIMIT,
+            batch_size=BATCH_SIZE,
+            random_seed=SEED,
+            base_model_path=BASE_MODEL_PATH,
+            base_config_path=BASE_CONFIG_PATH,
+            attn_implementation=ATTN_IMPLEMENTATION,
+        )
 
     # The rest of the processing happens on the combined dataframe
     if len(df) == 0:
-        logging.error("Error: No valid configurations found or calculated.")
-        return
+        raise RuntimeError("No valid compression-ratio configurations found")
 
     # Filter out invalid CRs for internal usage
     df = df[df["cr"] > 0].reset_index(drop=True)
@@ -453,15 +567,14 @@ def main():
     
     # ----------------- Cold Start -----------------
     feasible_configs = []
+    evaluated_configs = []
     config_id = 0
-    if len(df) > 3:
+    if len(df) > COLD_START_POINTS:
         # Sort by compression ratio.
         sorted_df = df.sort_values("cr")
-        idx_min = sorted_df.index[0]                  # Lowest CR, most conservative.
-        idx_max = sorted_df.index[-1]                 # Highest CR, most aggressive.
-        idx_mid = sorted_df.index[len(sorted_df)//2]  # Median CR, near the decision boundary.
-        # Evaluate in strict Max -> Mid -> Min order while removing duplicates.
-        candidates = [idx_max, idx_mid, idx_min]
+        # Span the CR range and evaluate from aggressive to conservative.
+        positions = np.linspace(len(sorted_df) - 1, 0, COLD_START_POINTS, dtype=int)
+        candidates = [sorted_df.index[position] for position in positions]
         selected_indices = []
         seen = set()
         for idx in candidates:
@@ -471,15 +584,20 @@ def main():
         
         initial_indices = np.array(selected_indices)
     else:
-        initial_indices = np.random.choice(df.index, min(3, len(df)), replace=False)
+        initial_indices = np.random.choice(df.index, min(COLD_START_POINTS, len(df)), replace=False)
     logging.info("--- Cold Start ---")
-    for idx in initial_indices:
+    for cold_index, idx in enumerate(initial_indices, start=1):
         params = df.iloc[idx].to_dict()
         acc = silent_call(run_acc, acc_evaluator, params)
         bo.observed_indices.append(idx)
         bo.observed_accs.append(acc)
+        evaluated_configs.append({**params, "accuracy": acc, "candidate_index": int(idx)})
         
-        logging.info(f"Testing Initial Config (ID:{idx}): CR={params['cr']:.4f} -> Acc={acc:.4f}")
+        status = "FEASIBLE" if acc >= TARGET_ACC_THRESHOLD else "INFEASIBLE"
+        logging.info(
+            "[SEARCH][cold %d/%d] candidate=%d cr=%.4f accuracy=%.2f status=%s",
+            cold_index, len(initial_indices), idx, params["cr"], acc, status,
+        )
         if acc >= TARGET_ACC_THRESHOLD:
             # Record feasible config
             record = params.copy()
@@ -527,7 +645,10 @@ def main():
             break        
         next_params = df.iloc[next_idx].to_dict()
         
-        logging.info(f"Proposing Config (ID:{next_idx}): CR={next_params['cr']:.4f} | Pred Acc={pred_acc:.4f}")
+        logging.info(
+            "[SEARCH][bo %d/%d] propose candidate=%d cr=%.4f predicted_accuracy=%.2f feasible_probability=%.3f",
+            i + 1, MAX_ITER, next_idx, next_params["cr"], pred_acc, prob,
+        )
         
         # Single Point Pruning
         # if best_feasible_cr > 0 and next_params['cr'] <= best_feasible_cr:
@@ -539,6 +660,7 @@ def main():
         real_acc = silent_call(run_acc, acc_evaluator, next_params)
         bo.observed_indices.append(next_idx)
         bo.observed_accs.append(real_acc)
+        evaluated_configs.append({**next_params, "accuracy": real_acc, "candidate_index": int(next_idx)})
         
         if real_acc >= TARGET_ACC_THRESHOLD:
             bo.consecutive_fail_count = 0
@@ -549,7 +671,10 @@ def main():
             config_id += 1
             feasible_configs.append(record)
 
-            logging.info(f"✅ Configuration is FEASIBLE. Acc={real_acc:.4f} > {TARGET_ACC_THRESHOLD:.4f}")
+            logging.info(
+                "[SEARCH][bo %d/%d] result candidate=%d accuracy=%.2f status=FEASIBLE",
+                i + 1, MAX_ITER, next_idx, real_acc,
+            )
             if next_params['cr'] > best_feasible_cr:
                 best_feasible_cr = next_params['cr']
                 best_config = next_params
@@ -570,7 +695,10 @@ def main():
         else:
             if i > MAX_ITER / 2:
                 bo.consecutive_fail_count += 1
-            logging.info(f"❌ INFEASIBLE (Acc={real_acc:.4f} < {TARGET_ACC_THRESHOLD:.4f})")
+            logging.info(
+                "[SEARCH][bo %d/%d] result candidate=%d accuracy=%.2f status=INFEASIBLE",
+                i + 1, MAX_ITER, next_idx, real_acc,
+            )
             if real_acc <= TARGET_ACC_THRESHOLD - ACC_TOLERANCE:
                 skipped_indices = bigger_pruning_select_by(df, next_params, next_idx, i, ["axis_key", "axis_value"])
                 new_skips = [x for x in skipped_indices if x not in bo.skipped_indices and x not in bo.observed_indices]
@@ -584,21 +712,55 @@ def main():
         i += 1
 
     logging.info("================ Search Finished ================")
-    os.makedirs(f"results/{MODEL_NAME}", exist_ok=True)
+    os.makedirs(model_results_dir(), exist_ok=True)
+    final_path = os.path.join(model_results_dir(), FINAL_JSON_PATH)
+    evaluated_path = os.path.join(model_results_dir(), "evaluated_configs.json")
+    summary_path = os.path.join(model_results_dir(), "summary.json")
     if feasible_configs:
         logging.info(f"Found {len(feasible_configs)} feasible configurations.")
         if best_config:
              logging.info(f"Best Config (CR={best_feasible_cr:.4f}):")
              logging.info(json.dumps(best_config, indent=2, default=str))
 
-        with open(f"results/{MODEL_NAME}/{FINAL_JSON_PATH}", "w") as f:
+        with open(final_path, "w") as f:
             json.dump(feasible_configs, f, indent=4, default=str)
-        logging.info(f"Saved all feasible configurations to results/{MODEL_NAME}/{FINAL_JSON_PATH}")
+        logging.info(f"Saved all feasible configurations to {final_path}")
     elif best_config:
         final = {k: v for k, v in best_config.items()}
         logging.info(json.dumps(final, indent=2, default=str))
-        with open(f"results/{MODEL_NAME}/{FINAL_JSON_PATH}", "w") as f:
+        with open(final_path, "w") as f:
             json.dump(final, f, indent=4, default=str)
+    else:
+        with open(final_path, "w") as f:
+            json.dump([], f)
+
+    with open(evaluated_path, "w") as f:
+        json.dump(evaluated_configs, f, indent=2, default=str)
+    summary = {
+        "status": "complete",
+        "evaluation_mode": EVALUATION_MODE,
+        "measured_profile": EVALUATION_MODE == "model",
+        "model": MODEL_NAME,
+        "tasks": TASK_TO_SEARCH,
+        "dataset_limit": DATASET_LIMIT,
+        "candidate_count": int(len(df)),
+        "accuracy_evaluations": len(evaluated_configs),
+        "feasible_count": len(feasible_configs),
+        "accuracy_threshold": TARGET_ACC_THRESHOLD,
+        "best_compression_ratio": best_feasible_cr if best_config is not None else None,
+        "elapsed_seconds": round(time.monotonic() - started_at, 2),
+        "feasible_results": final_path,
+        "evaluated_results": evaluated_path,
+    }
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    logging.info(
+        "Summary: candidates=%d evaluated=%d feasible=%d best_cr=%s elapsed=%.1fs",
+        len(df), len(evaluated_configs), len(feasible_configs),
+        f"{best_feasible_cr:.4f}" if best_config is not None else "n/a",
+        summary["elapsed_seconds"],
+    )
+    logging.info(f"Summary JSON: {summary_path}")
 
 if __name__ == "__main__":
     main()

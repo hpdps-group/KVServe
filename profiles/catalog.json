@@ -1,0 +1,435 @@
+{
+  "default": {
+    "model": "Qwen2.5-7B-Instruct",
+    "dataset": "qasper",
+    "machine": "5090",
+    "source": "main",
+    "n_raw": 16,
+    "n_profiles": 12,
+    "path": "libraries/Qwen2.5-7B-Instruct/qasper/5090.json"
+  },
+  "how_to_load": "from kvserve_v1.compression.controller.profile_catalog import load; lib = load('Qwen2.5-7B-Instruct', 'qasper', '5090')",
+  "controller": "ProfileLibrary(path); OnlineController(lib).select_profile(V_bytes, B_mbps, T_model_ms, T_SLO_ms, acc_req)",
+  "n_libraries": 41,
+  "entries": [
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "qasper",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 32,
+      "n_profiles": 9,
+      "path": "libraries/Llama-3.1-8B-Instruct/qasper/5090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "qasper",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 32,
+      "n_profiles": 9,
+      "path": "libraries/Llama-3.1-8B-Instruct/qasper/H100.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "qasper",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 32,
+      "n_profiles": 9,
+      "path": "libraries/Llama-3.1-8B-Instruct/qasper/6000P.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "qasper",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 32,
+      "n_profiles": 9,
+      "path": "libraries/Llama-3.1-8B-Instruct/qasper/4090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/gsm8k/5090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/gsm8k/H100.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/gsm8k/6000P.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/gsm8k/4090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "humaneval",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 20,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/humaneval/5090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "humaneval",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 20,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/humaneval/H100.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "humaneval",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 20,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/humaneval/6000P.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "humaneval",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 20,
+      "n_profiles": 7,
+      "path": "libraries/Llama-3.1-8B-Instruct/humaneval/4090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "multi_news",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 24,
+      "n_profiles": 5,
+      "path": "libraries/Llama-3.1-8B-Instruct/multi_news/5090.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "multi_news",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 24,
+      "n_profiles": 5,
+      "path": "libraries/Llama-3.1-8B-Instruct/multi_news/H100.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "multi_news",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 24,
+      "n_profiles": 5,
+      "path": "libraries/Llama-3.1-8B-Instruct/multi_news/6000P.json"
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct",
+      "dataset": "multi_news",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 24,
+      "n_profiles": 5,
+      "path": "libraries/Llama-3.1-8B-Instruct/multi_news/4090.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "qasper",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 38,
+      "n_profiles": 8,
+      "path": "libraries/Qwen2.5-32B-Instruct/qasper/H100.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "qasper",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 38,
+      "n_profiles": 8,
+      "path": "libraries/Qwen2.5-32B-Instruct/qasper/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 30,
+      "n_profiles": 8,
+      "path": "libraries/Qwen2.5-32B-Instruct/gsm8k/H100.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 30,
+      "n_profiles": 8,
+      "path": "libraries/Qwen2.5-32B-Instruct/gsm8k/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "humaneval",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-32B-Instruct/humaneval/H100.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "humaneval",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 22,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-32B-Instruct/humaneval/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "multi_news",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 42,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-32B-Instruct/multi_news/H100.json"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "multi_news",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 42,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-32B-Instruct/multi_news/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "qasper",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 16,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-7B-Instruct/qasper/5090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "qasper",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 16,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-7B-Instruct/qasper/H100.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "qasper",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 16,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-7B-Instruct/qasper/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "qasper",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 16,
+      "n_profiles": 12,
+      "path": "libraries/Qwen2.5-7B-Instruct/qasper/4090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-7B-Instruct/gsm8k/5090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-7B-Instruct/gsm8k/H100.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-7B-Instruct/gsm8k/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 10,
+      "path": "libraries/Qwen2.5-7B-Instruct/gsm8k/4090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "humaneval",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 6,
+      "path": "libraries/Qwen2.5-7B-Instruct/humaneval/5090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "humaneval",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 6,
+      "path": "libraries/Qwen2.5-7B-Instruct/humaneval/H100.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "humaneval",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 6,
+      "path": "libraries/Qwen2.5-7B-Instruct/humaneval/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "humaneval",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 6,
+      "path": "libraries/Qwen2.5-7B-Instruct/humaneval/4090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "multi_news",
+      "machine": "5090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 9,
+      "path": "libraries/Qwen2.5-7B-Instruct/multi_news/5090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "multi_news",
+      "machine": "H100",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 9,
+      "path": "libraries/Qwen2.5-7B-Instruct/multi_news/H100.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "multi_news",
+      "machine": "6000P",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 9,
+      "path": "libraries/Qwen2.5-7B-Instruct/multi_news/6000P.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "multi_news",
+      "machine": "4090",
+      "source": "main",
+      "n_raw": 28,
+      "n_profiles": 9,
+      "path": "libraries/Qwen2.5-7B-Instruct/multi_news/4090.json"
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "dataset": "fused_bo",
+      "machine": "5090",
+      "source": "fused",
+      "n_raw": 4,
+      "n_profiles": 1,
+      "path": "libraries/Qwen2.5-7B-Instruct/fused_bo/5090.json"
+    }
+  ],
+  "skipped": [
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "qasper",
+      "machine": "5090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "qasper",
+      "machine": "4090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "5090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "gsm8k",
+      "machine": "4090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "humaneval",
+      "machine": "5090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "humaneval",
+      "machine": "4090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "multi_news",
+      "machine": "5090",
+      "reason": "no_speed_csv"
+    },
+    {
+      "model": "Qwen2.5-32B-Instruct",
+      "dataset": "multi_news",
+      "machine": "4090",
+      "reason": "no_speed_csv"
+    }
+  ]
+}

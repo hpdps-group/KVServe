@@ -1,0 +1,16 @@
+# AE Python deps on top of kvserve-env:v2 / requirements.txt.
+# Core serving stack is already in the image (torch, vllm, nvCOMP, cupy).
+# The extra packages are for Track B profiler and plot reproduction.
+
+-r requirements.txt
+
+# Installed in sigcomm-ae from kvserve-ae's already-built 5090 wheel:
+#   third_party/fast-hadamard-transform (gitignored source)
+fast-hadamard-transform==1.1.0
+
+lm-eval[longbench]>=0.4.12,<0.5
+accelerate>=1,<2
+scikit-learn>=1.5,<2
+datasets>=2.16,<6
+pandas
+matplotlib

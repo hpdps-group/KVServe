@@ -4,7 +4,7 @@ import math
 import fast_hadamard_transform
 from typing import Optional, Any, List, Tuple, Dict
 from collections import deque
-from transformers.cache_utils import DynamicCache, QuantizedCache, CacheConfig
+from transformers.cache_utils import DynamicCache, DynamicLayer
 
 class NoneTransform:
     """
@@ -285,7 +285,7 @@ class AffineTransform(nn.Module):
     def inverse_transform(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
         return self.inverse(x, layer_idx)
 
-class CustomCacheConfig(CacheConfig):
+class CustomCacheConfig:
 
     def __init__(
         self,
@@ -372,6 +372,11 @@ class CustomCache(DynamicCache):
         self.comp_cr = cache_config.comp_cr
         self.compression_ratio = 0
         self.skip_quantization = False # Skip quantization after transform
+        # transformers>=4.57 stores cache state in ``Cache.layers`` instead of
+        # the legacy ``key_cache``/``value_cache`` lists.  Keep the logical
+        # sequence length separately because the prefill tensors are quantized
+        # and intentionally not retained in a DynamicLayer.
+        self._cache_lengths: List[int] = []
 
         if self.scores is not None:
             pruned_num_heads = round(self.scores.numel() * self.heads_selection)
@@ -380,8 +385,6 @@ class CustomCache(DynamicCache):
             multi_indices = torch.unravel_index(flat_indices, self.scores.shape)
             self.scores_mask[multi_indices] = True
 
-        super().__init__()
-
     def update(
         self,
         key_states: torch.Tensor,
@@ -389,15 +392,10 @@ class CustomCache(DynamicCache):
         layer_idx: int,
         cache_kwargs: Optional[dict[str, Any]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # Update the number of seen tokens
-        # print("Updating CustomCache...")
-        if layer_idx == 0:
-            self._seen_tokens += key_states.shape[-2]
-
-        if len(self.key_cache) < layer_idx:
+        if len(self.layers) < layer_idx:
             raise ValueError("Does not support model usage where layers are skipped. Use DynamicCache.")
         # prefill
-        elif len(self.key_cache) == layer_idx:
+        elif len(self.layers) == layer_idx:
             keys_to_return, values_to_return = key_states, value_states
 
             key_states = self.transform.transform(key_states, layer_idx, kind="k")
@@ -414,26 +412,28 @@ class CustomCache(DynamicCache):
             # kvcache reconstruction
             if len(self._low_quantized_key_cache) != 0:
                 self._head_layer_reconstruct(layer_idx)
-                self.key_cache[layer_idx] = self.transform.inverse(self.key_cache[layer_idx], layer_idx)
-                self.value_cache[layer_idx] = self.transform.inverse(self.value_cache[layer_idx], layer_idx)
+                self.layers[layer_idx].keys = self.transform.inverse(self.layers[layer_idx].keys, layer_idx)
+                self.layers[layer_idx].values = self.transform.inverse(self.layers[layer_idx].values, layer_idx)
 
             # 更新decode阶段kvcache
-            self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], key_states], dim=-2)
-            self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
+            self.layers[layer_idx].keys = torch.cat([self.layers[layer_idx].keys, key_states], dim=-2)
+            self.layers[layer_idx].values = torch.cat([self.layers[layer_idx].values, value_states], dim=-2)
+            self._cache_lengths[layer_idx] += key_states.shape[-2]
 
-            keys_to_return = self.key_cache[layer_idx]
-            values_to_return = self.value_cache[layer_idx]
+            keys_to_return = self.layers[layer_idx].keys
+            values_to_return = self.layers[layer_idx].values
 
         return keys_to_return, values_to_return
 
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
         """Returns the sequence length of the cached states. A layer index can be optionally passed."""
-        if len(self.key_cache) <= layer_idx:
+        if layer_idx is None or len(self._cache_lengths) <= layer_idx:
             return 0
-        # since we cannot get the seq_length of each layer directly and rely on `_seen_tokens` which is
-        # updated every "layer_idx" == 0, this is a hack to get the actual seq_length for the given layer_idx
-        # this part of code otherwise fails when used to verify attn_weight shape in some models
-        return self._seen_tokens if layer_idx == 0 else self._seen_tokens - 1
+        return self._cache_lengths[layer_idx]
+
+    def get_mask_sizes(self, cache_position: torch.Tensor, layer_idx: int) -> tuple[int, int]:
+        """Return mask dimensions using the logical (possibly quantized) cache length."""
+        return self.get_seq_length(layer_idx) + cache_position.shape[0], 0
 
     def compute_compression_ratio(self, ori_dtype, device="cuda"):
         import pickle
@@ -653,8 +653,12 @@ class CustomCache(DynamicCache):
         self._high_quantized_key_cache.append(high_keys)
         self._high_quantized_value_cache.append(high_values)
 
-        self.key_cache.append(torch.zeros(0, dtype=key_states.dtype, device=key_states.device))
-        self.value_cache.append(torch.zeros(0, dtype=key_states.dtype, device=key_states.device))        
+        cache_layer = DynamicLayer()
+        cache_layer.lazy_initialization(key_states)
+        cache_layer.keys = key_states[..., :0, :]
+        cache_layer.values = value_states[..., :0, :]
+        self.layers.append(cache_layer)
+        self._cache_lengths.append(key_states.shape[-2])
 
     def _head_layer_reconstruct(
         self,
@@ -688,5 +692,5 @@ class CustomCache(DynamicCache):
         reconstructed_value_layer[:, ~layer_mask, :, :] = high_values_dequantized
 
         # 4. 将解量化后的kvcache拼接到kvcache中(每层只需要执行一次解量化)
-        self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], reconstructed_key_layer], dim=-2)
-        self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], reconstructed_value_layer], dim=-2)
+        self.layers[layer_idx].keys = torch.cat([self.layers[layer_idx].keys, reconstructed_key_layer], dim=-2)
+        self.layers[layer_idx].values = torch.cat([self.layers[layer_idx].values, reconstructed_value_layer], dim=-2)

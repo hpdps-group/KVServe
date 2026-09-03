@@ -1,0 +1,642 @@
+{
+  "library_metadata": {
+    "model_name": "Qwen2.5-32B-Instruct",
+    "dataset": "qasper",
+    "machine": "H100",
+    "source": "main",
+    "input_length": 4096,
+    "num_profiles": 8,
+    "num_raw_profiles": 38,
+    "description": "Measured compression configs + component speeds, assembled into a fused ProfileLibrary (accuracy buckets, 1/B intervals, Pareto candidates).",
+    "units": {
+      "B_mbps": "MB/s (controller argument)",
+      "harmonic_speed_mbps": "MB/s",
+      "accuracy": "relative to uncompressed baseline, 0-1"
+    }
+  },
+  "accuracy_buckets": [
+    {
+      "bucket_id": 0,
+      "acc_range": [
+        0.96,
+        0.99
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c0",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 0,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.6,
+              "high_key_max_value": 6,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.6073,
+            "harmonic_speed_mbps": 59201.8141516373,
+            "critical_bandwidth_mbps": 53620.58102429695,
+            "encode_speed_mbps": 59201.8141516373,
+            "decode_speed_mbps": 59201.8141516373
+          },
+          "quality_metrics": {
+            "accuracy": 0.965,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c18",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 18,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.7,
+              "high_key_max_value": 10,
+              "high_value_max_value": 6,
+              "low_key_max_value": 4,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.879,
+            "harmonic_speed_mbps": 60710.84261060755,
+            "critical_bandwidth_mbps": 51885.30945017615,
+            "encode_speed_mbps": 60710.84261060755,
+            "decode_speed_mbps": 60710.84261060755
+          },
+          "quality_metrics": {
+            "accuracy": 0.977,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c8",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 8,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 6,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 12.7696,
+            "harmonic_speed_mbps": 42233.411957564735,
+            "critical_bandwidth_mbps": 38926.07171530462,
+            "encode_speed_mbps": 42233.411957564735,
+            "decode_speed_mbps": 42233.411957564735
+          },
+          "quality_metrics": {
+            "accuracy": 0.9636,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.8649555467272402e-05
+          ],
+          "B_range_mbps": [
+            null,
+            53620.581
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c18",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c0",
+            "qwen2-5-32b-instruct_qasper_h100_c18",
+            "qwen2-5-32b-instruct_qasper_h100_c8"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.8649555467272402e-05,
+            1.9273278132035984e-05
+          ],
+          "B_range_mbps": [
+            53620.581,
+            51885.309
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c0",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c0",
+            "qwen2-5-32b-instruct_qasper_h100_c18"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.9273278132035984e-05,
+            2.5689723003999617e-05
+          ],
+          "B_range_mbps": [
+            51885.309,
+            38926.072
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c18",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c0",
+            "qwen2-5-32b-instruct_qasper_h100_c18",
+            "qwen2-5-32b-instruct_qasper_h100_c8"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            2.5689723003999617e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            38926.072,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c8",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c18",
+            "qwen2-5-32b-instruct_qasper_h100_c8"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 14
+    },
+    {
+      "bucket_id": 1,
+      "acc_range": [
+        0.99,
+        1.2
+      ],
+      "pareto_profiles": [
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c34",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 34,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 5.21,
+            "harmonic_speed_mbps": 79946.26898374656,
+            "critical_bandwidth_mbps": 64601.495666328796,
+            "encode_speed_mbps": 79946.26898374656,
+            "decode_speed_mbps": 79946.26898374656
+          },
+          "quality_metrics": {
+            "accuracy": 1.0244,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c36",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 36,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "cachegen",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.3,
+              "high_key_max_value": 16,
+              "high_value_max_value": 16,
+              "low_key_max_value": 12,
+              "low_value_max_value": 12,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "layer"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 4.0971,
+            "harmonic_speed_mbps": 82722.91280315134,
+            "critical_bandwidth_mbps": 62532.31145020625,
+            "encode_speed_mbps": 82722.91280315134,
+            "decode_speed_mbps": 82722.91280315134
+          },
+          "quality_metrics": {
+            "accuracy": 1.0244,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c2",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 2,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 8,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 9.949,
+            "harmonic_speed_mbps": 59201.8141516373,
+            "critical_bandwidth_mbps": 53251.28503799399,
+            "encode_speed_mbps": 59201.8141516373,
+            "decode_speed_mbps": 59201.8141516373
+          },
+          "quality_metrics": {
+            "accuracy": 0.9944,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c19",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 19,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "quantizer",
+              "bitcomp"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "none"
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.9,
+              "high_key_max_value": 8,
+              "high_value_max_value": 6,
+              "low_key_max_value": 6,
+              "low_value_max_value": 4,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "Bitcomp",
+              "data_type": "|b1",
+              "algorithm_type": 0
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 6.3697,
+            "harmonic_speed_mbps": 60710.84261060755,
+            "critical_bandwidth_mbps": 51179.649208939096,
+            "encode_speed_mbps": 60710.84261060755,
+            "decode_speed_mbps": 60710.84261060755
+          },
+          "quality_metrics": {
+            "accuracy": 0.9944,
+            "metric_name": "relative_task_accuracy"
+          }
+        },
+        {
+          "profile_id": "qwen2-5-32b-instruct_qasper_h100_c13",
+          "metadata": {
+            "model_name": "Qwen2.5-32B-Instruct",
+            "dataset": "qasper",
+            "machine": "H100",
+            "config_id": 13,
+            "source": "main:qasper.json+H100_Qwen2.5-32B-Instruct_speed.csv",
+            "input_length": 4096,
+            "pipeline_components": [
+              "hadamard",
+              "quantizer",
+              "ans"
+            ]
+          },
+          "compression_config": {
+            "enabled": true,
+            "pipeline": [
+              "transformer",
+              "quantizer",
+              "codec"
+            ],
+            "transformer_config": {
+              "transform_type": "hadamard",
+              "seed": 13107
+            },
+            "quantizer_config": {
+              "model_name": "Qwen2.5-32B-Instruct",
+              "hybrid_ratio": 0.5,
+              "high_key_max_value": 6,
+              "high_value_max_value": 5,
+              "low_key_max_value": 6,
+              "low_value_max_value": 3,
+              "axis_key": "channel",
+              "axis_value": "token",
+              "split_type": "head"
+            },
+            "codec_config": {
+              "codec_type": "nvcomp",
+              "nvcomp_algorithm": "ANS",
+              "data_type": "|u1"
+            },
+            "min_compress_size": 0
+          },
+          "performance_metrics": {
+            "compression_ratio": 10.9437,
+            "harmonic_speed_mbps": 42233.411957564735,
+            "critical_bandwidth_mbps": 38374.259024135936,
+            "encode_speed_mbps": 42233.411957564735,
+            "decode_speed_mbps": 42233.411957564735
+          },
+          "quality_metrics": {
+            "accuracy": 0.9962000000000001,
+            "metric_name": "relative_task_accuracy"
+          }
+        }
+      ],
+      "bandwidth_intervals": [
+        {
+          "interval_id": 0,
+          "x_range": [
+            0.0,
+            1.54795177679023e-05
+          ],
+          "B_range_mbps": [
+            null,
+            64601.496
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c36",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c34",
+            "qwen2-5-32b-instruct_qasper_h100_c36",
+            "qwen2-5-32b-instruct_qasper_h100_c2"
+          ]
+        },
+        {
+          "interval_id": 1,
+          "x_range": [
+            1.54795177679023e-05,
+            1.5991732542883662e-05
+          ],
+          "B_range_mbps": [
+            64601.496,
+            62532.311
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c34",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c34",
+            "qwen2-5-32b-instruct_qasper_h100_c36"
+          ]
+        },
+        {
+          "interval_id": 2,
+          "x_range": [
+            1.5991732542883662e-05,
+            1.8778889547670352e-05
+          ],
+          "B_range_mbps": [
+            62532.311,
+            53251.285
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c36",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c34",
+            "qwen2-5-32b-instruct_qasper_h100_c36",
+            "qwen2-5-32b-instruct_qasper_h100_c2"
+          ]
+        },
+        {
+          "interval_id": 3,
+          "x_range": [
+            1.8778889547670352e-05,
+            1.953901629762126e-05
+          ],
+          "B_range_mbps": [
+            53251.285,
+            51179.649
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c2",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c36",
+            "qwen2-5-32b-instruct_qasper_h100_c2",
+            "qwen2-5-32b-instruct_qasper_h100_c19"
+          ]
+        },
+        {
+          "interval_id": 4,
+          "x_range": [
+            1.953901629762126e-05,
+            2.6059135092902728e-05
+          ],
+          "B_range_mbps": [
+            51179.649,
+            38374.259
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c19",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c2",
+            "qwen2-5-32b-instruct_qasper_h100_c19",
+            "qwen2-5-32b-instruct_qasper_h100_c13"
+          ]
+        },
+        {
+          "interval_id": 5,
+          "x_range": [
+            2.6059135092902728e-05,
+            1.0
+          ],
+          "B_range_mbps": [
+            38374.259,
+            0.0
+          ],
+          "model_optimal_profile_id": "qwen2-5-32b-instruct_qasper_h100_c13",
+          "candidate_profile_ids": [
+            "qwen2-5-32b-instruct_qasper_h100_c19",
+            "qwen2-5-32b-instruct_qasper_h100_c13"
+          ]
+        }
+      ],
+      "n_raw_in_bucket": 24
+    }
+  ]
+}

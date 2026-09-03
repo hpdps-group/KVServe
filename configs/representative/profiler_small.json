@@ -1,0 +1,20 @@
+{
+  "track": "B2",
+  "description": "Fast deterministic validation of the offline-search control flow; not a measured profile.",
+  "evaluation_mode": "smoke",
+  "model_name": "Qwen2.5-7B-Instruct",
+  "model_path": "/data/models/Qwen2.5-7B-Instruct",
+  "tasks": ["longbench_2wikimqa"],
+  "dataset_limit": 5,
+  "batch_size": 1,
+  "cold_start_points": 2,
+  "max_iter": 50,
+  "acc_tolerance": 3.0,
+  "seed": 42,
+  "attn_implementation": "sdpa",
+  "base_config_path": "/workspace/kvserve_v1/offline_search/duo_config",
+  "cr_cache_path": "/workspace/kvserve_v1/offline_search/evaluation/param_search/results/Qwen2.5-7B-Instruct/search_space.csv",
+  "final_json": "smoke_search_results.json",
+  "target_runtime_seconds": 10,
+  "output": "results/profiler_small"
+}

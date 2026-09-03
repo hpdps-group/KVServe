@@ -655,6 +655,9 @@ def run_decode(
         prompt_tokens, output_tokens = _count_tokens(outputs)
         print_summary(
             results,
+            measured_s,
+            prompt_tokens,
+            output_tokens,
             compression_ratios=None,
             compression_enabled=compression_spec is not None,
         )
@@ -713,6 +716,8 @@ def main() -> None:
     parser.add_argument("--gpu-mem-util", type=float,
                         default=GPU_MEMORY_UTILIZATION)
     parser.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN)
+    parser.add_argument("--max-prompt-chars", type=int, default=MAX_PROMPT_CHARS,
+                        help="Char cap before tokenization. 0 disables char truncation.")
     parser.add_argument(
         "--max-num-batched-tokens",
         type=int,
@@ -818,7 +823,7 @@ def main() -> None:
         args.lmeval_task,
         args.num_requests,
         offline=not args.online,
-        max_prompt_chars=MAX_PROMPT_CHARS,
+        max_prompt_chars=args.max_prompt_chars,
         data_path=args.data_path,
         max_prompt_tokens=max_prompt_tokens,
     )

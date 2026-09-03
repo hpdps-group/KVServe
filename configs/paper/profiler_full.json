@@ -1,0 +1,19 @@
+{
+  "track": "paper",
+  "description": "Paper-scale Bayesian profiling. evaluation_mode=model; runtime ~20 h. Not required for AE.",
+  "evaluation_mode": "model",
+  "model_name": "Qwen2.5-7B-Instruct",
+  "model_path": "/data/models/Qwen2.5-7B-Instruct",
+  "tasks": ["longbench_2wikimqa"],
+  "dataset_limit": 50,
+  "batch_size": 1,
+  "cold_start_points": 8,
+  "max_iter": 200,
+  "acc_tolerance": 3.0,
+  "seed": 42,
+  "attn_implementation": "sdpa",
+  "base_config_path": "/workspace/kvserve_v1/offline_search/duo_config",
+  "cr_cache_path": "/workspace/kvserve_v1/offline_search/evaluation/param_search/results/Qwen2.5-7B-Instruct/search_space.csv",
+  "final_json": "tolerance_3_results.json",
+  "output": "results/profiler_full"
+}

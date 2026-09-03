@@ -1,6 +1,6 @@
 import torch
 from typing import Optional, Any, List, Tuple
-from transformers.cache_utils import DynamicCache, CacheConfig
+from transformers.cache_utils import DynamicCache
 
 def search_hyperplane(X, max_iter: int = 1000):
     """
@@ -16,7 +16,7 @@ def search_hyperplane(X, max_iter: int = 1000):
     # Return best effort if convergence fails
     return -1e5 * Y / Y.norm(dim=-1, keepdim=True) ** 2
 
-class DuoAttentionCacheConfig(CacheConfig):
+class DuoAttentionCacheConfig:
     """
     Configuration class for DuoAttentionCache.
     """

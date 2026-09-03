@@ -1,9 +1,9 @@
 import torch
 from typing import Optional, Any, List, Tuple
 from collections import deque
-from transformers.cache_utils import DynamicCache, QuantizedCache, CacheConfig
+from transformers.cache_utils import DynamicCache
 
-class CacheGenCacheConfig(CacheConfig):
+class CacheGenCacheConfig:
 
     def __init__(
         self,

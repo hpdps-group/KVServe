@@ -76,6 +76,7 @@ class AccuracyEvaluator:
         random_seed=42,
         base_model_path=None,
         base_config_path=None,
+        attn_implementation="sdpa",
     ):
         print(f"Loading model {model_name} and preparing data... (This happens only once)")
         self.device = device
@@ -84,6 +85,7 @@ class AccuracyEvaluator:
         self.limit = limit
         self.batch_size = batch_size
         self.random_seed = random_seed
+        self.attn_implementation = attn_implementation
         if base_model_path is None or base_config_path is None:
             raise ValueError("base_model_path and base_config_path must be provided by the search script.")
         self.base_model_path = base_model_path
@@ -149,7 +151,7 @@ class AccuracyEvaluator:
             "pretrained": f"{self.base_model_path}/{self.model_name}",
             "device_map": "auto",
             "parallelize": True,
-            "attn_implementation": "flash_attention_2",
+            "attn_implementation": self.attn_implementation,
             "cache_type": "default",
         }
         with suppress_fd_stderr():
@@ -176,6 +178,11 @@ class AccuracyEvaluator:
                         default_values.append(round(value, 4))
                         # break
         self.default_scores = np.array(default_values)
+        self.valid_baseline_mask = np.isfinite(self.default_scores) & (np.abs(self.default_scores) > 1e-12)
+        if not self.valid_baseline_mask.any():
+            raise RuntimeError(
+                "All sampled baseline metrics are zero; increase dataset_limit or change the sampling seed"
+            )
         del default_results
         gc.collect()
         torch.cuda.empty_cache()        
@@ -192,7 +199,7 @@ class AccuracyEvaluator:
             "pretrained": f"{self.base_model_path}/{self.model_name}",
             "device_map": "auto",
             "parallelize": True,
-            "attn_implementation": "flash_attention_2",
+            "attn_implementation": self.attn_implementation,
 
             "transform_type": params["transform_type"],
             "scores": self.scores,
@@ -232,7 +239,20 @@ class AccuracyEvaluator:
                         custom_values.append(round(value, 4))
                         # break
         custom_scores = np.array(custom_values)
-        avg_score = (custom_scores / self.default_scores).mean() * 100
+        if custom_scores.shape != self.default_scores.shape:
+            raise RuntimeError(
+                f"Metric count changed between baseline ({self.default_scores.size}) "
+                f"and custom cache ({custom_scores.size})"
+            )
+        valid_custom = np.isfinite(custom_scores[self.valid_baseline_mask])
+        if not valid_custom.all():
+            raise RuntimeError("Custom-cache evaluation returned a non-finite task metric")
+        # A zero baseline metric cannot define relative accuracy, so exclude it
+        # rather than allowing 0/0 to poison the Bayesian optimizer with NaN.
+        avg_score = (
+            custom_scores[self.valid_baseline_mask]
+            / self.default_scores[self.valid_baseline_mask]
+        ).mean() * 100
         print(f"Custom scores: {custom_scores}")
         print(f"Default scores: {self.default_scores}")
         print(f"Avg score: {avg_score}")

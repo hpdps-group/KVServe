@@ -1,0 +1,23 @@
+{
+  "track": "C2",
+  "description": "Prefix-cache hit: HotpotQA prefixes, default compression, vs recompute and remote SSD @ 5 Gbps.",
+  "model": "/data/models/Qwen2.5-7B-Instruct",
+  "dataset": "datasets/hotpotqa_ae.jsonl",
+  "num_requests": 20,
+  "warmup_requests": 1,
+  "compression": "default",
+  "ssd_gbps": 5,
+  "max_tokens": 1,
+  "max_model_len": 20480,
+  "max_num_batched_tokens": 20480,
+  "max_prompt_chars": 0,
+  "max_num_seqs": 1,
+  "gpu_mem_util": 0.6,
+  "kv_port": 25110,
+  "barrier_timeout_s": 1200,
+  "gpus": {
+    "recompute": 0,
+    "prefill": 0,
+    "decode": 1
+  }
+}

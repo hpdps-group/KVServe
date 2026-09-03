@@ -59,18 +59,31 @@ def _sorted_rids(rids: list[str] | set[str]) -> list[str]:
 def _write_compression_stats(
     request_id: str,
     transfer_id: str,
-    original_bytes: int,
-    compressed_bytes: int,
+    original_bytes: int = 0,
+    compressed_bytes: int = 0,
+    encode_ms: float | None = None,
+    decode_ms: float | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     stats_path = os.environ.get("KVSERVE_COMPRESSION_STATS_PATH")
-    if not stats_path or original_bytes <= 0 or compressed_bytes <= 0:
+    if not stats_path:
+        return
+    if decode_ms is None and (original_bytes <= 0 or compressed_bytes <= 0):
         return
     row = {
         "request_id": request_id,
         "transfer_id": transfer_id,
-        "original_bytes": original_bytes,
-        "compressed_bytes": compressed_bytes,
     }
+    if original_bytes:
+        row["original_bytes"] = original_bytes
+    if compressed_bytes:
+        row["compressed_bytes"] = compressed_bytes
+    if encode_ms is not None:
+        row["encode_ms"] = encode_ms
+    if decode_ms is not None:
+        row["decode_ms"] = decode_ms
+    if details:
+        row.update({key: value for key, value in details.items() if value is not None})
     try:
         with open(stats_path, "a") as f:
             f.write(json.dumps(row, sort_keys=True) + "\n")
@@ -335,11 +348,32 @@ class CompressedKVConnector(KVConnectorBase_V1):
                             aux_tensors=payload["aux_tensors"],
                         )
                         compressed = restore_from_wire(wire)
+                        t_dec = time.monotonic()
                         stacked_kv = compressor.decompress(compressed)
+                        decode_ms = (time.monotonic() - t_dec) * 1e3
                         if stacked_kv is None:
                             logger.error(
                                 "[Connector] Decompression failed for %s", rid)
                             continue
+                        original_shape = compressed.metadata.get("original_shape")
+                        pipeline = list(
+                            compressed.metadata.get("compression_pipeline") or [])
+                        _write_compression_stats(
+                            request_id=rid,
+                            transfer_id=transfer_id,
+                            decode_ms=decode_ms,
+                            details={
+                                "compression_pipeline": pipeline,
+                                "transform_type": compressed.metadata.get(
+                                    "transform_type"),
+                                "inverse_transformer_applied": (
+                                    "transformer" in pipeline),
+                                "shape_match": (
+                                    list(stacked_kv.shape) == list(original_shape)
+                                    if original_shape is not None else None
+                                ),
+                            },
+                        )
                     else:
                         logger.error(
                             "[Connector] Received compressed KV but no compressor "
@@ -429,6 +463,7 @@ class CompressedKVConnector(KVConnectorBase_V1):
             if compressor is not None:
                 t0 = time.monotonic()
                 compressed = compressor.compress(stacked, rid)
+                encode_ms = (time.monotonic() - t0) * 1e3
                 if compressed is not None:
                     wire = build_wire(compressed, _max_nccl_chunk_bytes())
                     send_names = add_sentinel(layer_names)
@@ -446,8 +481,22 @@ class CompressedKVConnector(KVConnectorBase_V1):
                         transfer_id=transfer_id,
                         original_bytes=stacked.numel() * stacked.element_size(),
                         compressed_bytes=wire.nbytes,
+                        encode_ms=encode_ms,
+                        details={
+                            "compression_pipeline": compressed.metadata.get(
+                                "compression_pipeline"),
+                            "transform_type": compressed.metadata.get(
+                                "transform_type"),
+                            "transformer_applied": compressed.metadata.get(
+                                "transformer_applied", False),
+                            "quantizer_applied": compressed.metadata.get(
+                                "quantization_applied", False),
+                            "codec_type": compressed.metadata.get("codec_type"),
+                            "codec_algorithm": compressed.metadata.get(
+                                "codec_algorithm"),
+                        },
                     )
-                    elapsed_ms = (time.monotonic() - t0) * 1e3
+                    elapsed_ms = encode_ms
                     compressor.update_controller(rid, elapsed_ms)
                     logger.debug(
                         "[Connector] Sent compressed KV for %s "

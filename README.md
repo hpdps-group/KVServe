@@ -1,27 +1,16 @@
-# KVServe (`fused`)
+# KVServe
 
-## Run TileLang + LC PD smoke test
+SIGCOMM 2026 artifact-evaluation snapshot (`ae` branch).
 
-```bash
-git clone git@github.com:hpdps-group/KVServe.git && cd KVServe
-git checkout fused
-export PYTHONPATH=$PWD
+**Reviewer guide:** [`ae/README.md`](ae/README.md)
 
-# 1) build LC once (need local LC-framework; set --arch for your GPU)
-python3 scripts/build_lc_runtime.py \
-  --lc-dir /path/to/LC-framework \
-  --output-dir build/lc_runtime \
-  --arch sm_120 \
-  --algorithm "TUPL8_1 BIT_8 RZE_2"
-export KVSERVE_LC_META_PATH=$PWD/build/lc_runtime/lc_runtime_meta.json
+That document is the AE README: how to enter the prepared `sigcomm-ae`
+container, which commands to run, how each test maps to paper claims/figures,
+and what output to expect.
 
-# 2) two-GPU smoke
-python3 tests/test_kvserve.py \
-  --mode tilelang_lc \
-  --model /path/to/model \
-  --num-requests 2 --max-tokens 8 \
-  --prefill-gpu 0 --decode-gpu 1 \
-  --kv-port 25020 --gpu-mem-util 0.75
-```
+This branch matches the evaluation container (`/workspace`). Code, models,
+datasets, and dependencies for the five functional tests (B1–B3, C1–C2) are
+already there. Testbed login is provided privately via HotCRP, not in git.
 
-See `PASS:` at the end. OOM → lower `--gpu-mem-util`.
+KVServe itself is a vLLM KV-connector for service-aware KV-cache compression
+in disaggregated LLM serving. Paper: https://arxiv.org/abs/2605.13734

@@ -16,6 +16,15 @@ kvserve_v1/transport/file_transport.py
 logs/
 *.log
 
-datasets/
+datasets/*
+!datasets/hotpotqa_ae.jsonl
 *.pkl
 *.so
+# AE generated outputs
+ae/results/
+
+# local AE deps (not part of fused)
+third_party/
+.deps/
+
+results/

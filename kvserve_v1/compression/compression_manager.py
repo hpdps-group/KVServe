@@ -215,6 +215,24 @@ class CompressionManager:
 
         if not self.config.enabled or not self.config.pipeline:
             return None
+
+        # Keep a compact, serializable description of the pipeline in the wire
+        # metadata. Besides helping the receiver select the inverse path, this
+        # gives AE scripts evidence about the components that actually ran.
+        metadata = dict(metadata)
+        metadata["compression_pipeline"] = list(self.config.pipeline)
+        if "transformer" in self.config.pipeline:
+            metadata["transform_type"] = (
+                (self.config.transformer_config or {}).get("transform_type")
+                or "hadamard"
+            )
+        if "codec" in self.config.pipeline:
+            codec_config = self.config.codec_config or {}
+            metadata["codec_type"] = codec_config.get("codec_type")
+            metadata["codec_algorithm"] = (
+                codec_config.get("nvcomp_algorithm")
+                or codec_config.get("lc_algorithm")
+            )
         if not isinstance(all_layers_data, torch.Tensor) or all_layers_data.dim() != 6:
             log_error(f"[CompressionManager] all_layers_data must be 6D torch.Tensor, got {type(all_layers_data)}, dim={all_layers_data.dim() if isinstance(all_layers_data, torch.Tensor) else 'N/A'}")
             return None

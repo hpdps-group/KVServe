@@ -1,0 +1,9 @@
+{
+  "note": "Paper-scale configs. Full profiler: ae/scripts/run_profiler_full.sh (~20 h).",
+  "model_name": "Qwen2.5-7B-Instruct",
+  "full_profiler": {
+    "script": "ae/scripts/run_profiler_full.sh",
+    "config": "configs/paper/profiler_full.json",
+    "expected_runtime": "~20 h"
+  }
+}

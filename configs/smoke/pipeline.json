@@ -1,0 +1,18 @@
+{
+  "track": "A",
+  "description": "Single-node functional compression pipeline. No dataset, no cluster. Matches the kvserve-ae test.sh recipe that already ran on this 5090 host.",
+  "model": "/data/models/Qwen2.5-7B-Instruct",
+  "compression_config": "configs/smoke/compression.json",
+  "entrypoint": "ae/scripts/run_compression.sh",
+  "pipeline": ["transformer", "quantizer", "codec"],
+  "checks": {
+    "shape_match": true,
+    "compression_ratio_gt": 1.0,
+    "transformer_forward": "hadamard",
+    "transformer_inverse": "hadamard",
+    "quantizer_applied": true,
+    "codec_applied": "nvcomp/ANS",
+    "decode_succeeds": true,
+    "requests_completed": 1
+  }
+}
