@@ -110,6 +110,27 @@ paths, so it must be built or configured separately on producer and consumer.
 Old LC libraries must be rebuilt for runtime ABI 2, which passes the PyTorch
 CUDA stream explicitly and validates decoded byte counts.
 
+### Optional GPU bit packing
+
+Install `pip install -e '.[bitpack]'`, then select
+`codec_config={"codec_type": "bitpack", "bitpack_bits": 4}`. This codec uses
+Triton on the current PyTorch CUDA stream; nvCOMP and LC are not required.
+It preserves bounded **uint8 symbols** exactly, with a 16-byte format header.
+For 6 or 12 quantization levels, use at least 3 or 4 bits, respectively. With
+mixed precision, choose a width covering the largest symbol from every K/V
+section in the payload. The existing quantizer may emit its configured maximum
+value inclusively: a maximum of 8 therefore requires 4 bits, not 3.
+
+Both endpoints must use the same width. The default is 8 bits, which accepts
+all byte values. Invalid configuration or shape/length is rejected; symbols
+outside the configured range or a mismatched header trigger an asynchronous
+CUDA assertion rather than silent truncation. Check the quantizer's alphabet
+before deployment: a device assertion invalidates that process's CUDA context.
+Bit packing is lossless; a preceding quantizer still introduces its own loss.
+It trades entropy coding's smaller payload for lower codec overhead, and is
+available in the modular component library. The fixed-profile Mooncake runtime
+continues to accept ANS only.
+
 Four example profiles are provided in `configs/compression/`: `fused_top_lc.json`,
 `fused_top_nvcomp.json`, `original_top_lc.json`, and `original_top_nvcomp.json`.
 For a two-GPU fused + LC smoke test:
@@ -256,7 +277,7 @@ Built-in stages:
 
 - `transformer`: `KVServeTransformer`, currently Hadamard transform.
 - `quantizer`: `KVServeQuantizer`, hybrid head/layer precision quantization.
-- `codec`: `KVServeCodec`, nvCOMP- or LC-backed lossless payload coding.
+- `codec`: `KVServeCodec`, nvCOMP, LC, or GPU bit packing of bounded uint8 symbols.
 
 ### Build Your Own Compression Component
 

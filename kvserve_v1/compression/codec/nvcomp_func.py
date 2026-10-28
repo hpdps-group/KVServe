@@ -4,7 +4,6 @@ Implements GPU-accelerated lossless compression using NVIDIA nvCOMP library
 """
 
 import torch
-import cupy as cp
 from nvidia import nvcomp
 
 class nvCOMPCodec:

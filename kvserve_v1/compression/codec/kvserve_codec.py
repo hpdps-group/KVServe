@@ -11,6 +11,7 @@ _KVSERVE_CODEC_KEYS = frozenset({
     "nvcomp_algorithm",
     "lc_algorithm",
     "lc_meta_path",
+    "bitpack_bits",
 })
 
 
@@ -33,7 +34,8 @@ class KVServeCodec(Codec):
         
         Args:
             **kwargs: Configuration parameters including:
-                codec_type: Type of codec, "nvcomp" or "lc" (default: "nvcomp")
+                codec_type: "nvcomp", "lc", or "bitpack" (default: "nvcomp")
+                bitpack_bits: Integer symbol width in [1, 8] (default: 8)
                 nvcomp_algorithm: Compression algorithm, one of:
                     "ANS", "Bitcomp", "Cascaded", "Deflate", "GDeflate", "LZ4", "Zstd"
                     (default: "ANS")
@@ -62,9 +64,12 @@ class KVServeCodec(Codec):
             case "lc":
                 from kvserve_v1.compression.codec.lc_codec import LCCodec
                 self.codec = LCCodec(**kwargs)
+            case "bitpack":
+                from kvserve_v1.compression.codec.bitpack_codec import BitPackCodec
+                self.codec = BitPackCodec(**kwargs)
             case _:
                 raise ValueError(
-                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc', 'bitpack']"
                 )
 
     def validate(
@@ -76,8 +81,8 @@ class KVServeCodec(Codec):
         Raises:
             AssertionError: If codec_type or nvcomp_algorithm is invalid
         """
-        assert self.codec_type in ["nvcomp", "lc"], \
-            f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+        assert self.codec_type in ["nvcomp", "lc", "bitpack"], \
+            f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc', 'bitpack']"
         if self.codec_type == "nvcomp":
             assert self.nvcomp_algorithm in ["ANS", "Bitcomp", "Cascaded", "Deflate", "GDeflate", "LZ4", "Zstd"], \
                 f"Invalid nvcomp's algorithm: {self.nvcomp_algorithm}"
@@ -135,9 +140,15 @@ class KVServeCodec(Codec):
                     return
                 from kvserve_v1.compression.codec.lc_codec import LCCodec
                 self.codec = LCCodec(**self._codec_kwargs)
+            case "bitpack":
+                if self.codec is not None and prev_type == "bitpack":
+                    self.codec.update_params(**kwargs)
+                    return
+                from kvserve_v1.compression.codec.bitpack_codec import BitPackCodec
+                self.codec = BitPackCodec(**self._codec_kwargs)
             case _:
                 raise ValueError(
-                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc']"
+                    f"Invalid codec type: {self.codec_type}, expected one of: ['nvcomp', 'lc', 'bitpack']"
                 )
 
     def encode(
