@@ -168,6 +168,26 @@ TP-shard measurements do not replace a full distributed TP=2 inference test.
 The serving benchmarks exclude warmup and report measured request throughput;
 the transfer-time estimates from the codec benchmark are theoretical.
 
+`scripts/bench_compression_stages.py` measures the individual transform,
+quantizer, and lossless codec interfaces. Generate one input file and reuse it
+on both systems to compare NVIDIA with an AMD port. The built-in backend uses
+the legacy KVServe components (not the Mooncake CUDA runtime); an AMD backend
+must provide the adapter described in the script's docstring. GPU event and
+synchronized wall times are reported separately.
+
+```bash
+python scripts/bench_compression_stages.py --make-input shared_input.pt
+python scripts/bench_compression_stages.py --input shared_input.pt \
+  --codec nvcomp --output nvidia.json
+```
+
+For the built-in backend, install `fast_hadamard_transform` and nvCOMP in the
+GPU environment. Codec-only results use a shared quantized-symbol fixture,
+so their input bytes match on both platforms. See `--help` for input shape,
+axis, warmup, iteration, and external backend options.
+An example H100 run with raw results is documented in
+[`docs/benchmarks/h100-compression-stages-20261029.md`](docs/benchmarks/h100-compression-stages-20261029.md).
+
 If you do not install in editable mode, set `PYTHONPATH` before running tests:
 
 ```bash
