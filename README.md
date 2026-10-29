@@ -181,6 +181,10 @@ python scripts/bench_accelerated_stages.py --input kv.pt --tokens 1024 \
   --save-symbols symbols.pt --output nvidia.json
 ```
 
+For an optional Humming comparison on NVIDIA, install `humming-kernels`
+separately and run `scripts/bench_hadamard_compare.py` with the same fixture.
+The H100 results and limitations are documented below.
+
 Pass `--symbols-input symbols.pt` on the other platform to measure its codec
 on identical bytes. The benchmark excludes gather/sign, scatter and transport;
 it is not a full serving benchmark. The

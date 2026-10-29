@@ -50,6 +50,48 @@ The 8,192-token case treats all tokens as one reduction/codec input. It is a
 large-payload comparison, not eight independent 1,024-token runtime chunks:
 the quantization ranges, compressed representation and launch behavior differ.
 
+## Humming Hadamard comparison
+
+On the same H100 and the same real BF16 K/V fixture, compare the production
+CUDA kernels with Humming 0.1.16. Each result is the median of three independent
+runs, with seven CUDA-graph event samples per run and five operations per sample.
+Each row covers all 28 layers; GB/s is BF16 input bytes divided by elapsed time.
+[Raw timings, wall times, input hashes and monitoring](h100-hadamard-humming-20261029.json)
+are available separately.
+
+| Tokens | Tensor | Current CUDA ms / GB/s | Humming per layer ms / GB/s | Humming batched ms / GB/s |
+| ---: | --- | ---: | ---: | ---: |
+| 1,024 | K | 0.7570 / 38.79 | 0.1267 / 231.77 | 0.0779 / 376.67 |
+| 1,024 | V | 0.7593 / 38.67 | 0.1268 / 231.51 | 0.0777 / 377.85 |
+| 8,192 | K | 3.5325 / 66.49 | 0.6487 / 362.07 | 0.5971 / 393.34 |
+| 8,192 | V | 3.5325 / 66.49 | 0.6488 / 362.02 | 0.5972 / 393.33 |
+
+These measurements start from signed, contiguous data and include only the
+normalized transform. They exclude gathering, sign multiplication, allocation,
+scatter and transport. Synchronized wall time without graph replay for the
+1,024-token K case was 0.996 ms for current CUDA, 0.805 ms for per-layer
+Humming, and 0.088 ms for batched Humming. These are stage microbenchmarks,
+not end-to-end serving speeds. The batched experiment uses one contiguous
+28-layer input and does not include the cost of creating such a batch.
+
+KVServe's Python transform calls Humming on the main thread, while the current
+Mooncake worker-thread path uses the PyTorch fallback. The C++/CUDA runtime
+uses its own kernels; a batched Humming runtime is not implemented. Results
+are not bit-identical: for 1,024-token K, mean and maximum absolute differences
+between Humming and current CUDA were 0.01295 and 3.0, respectively; for V they
+were 0.00329 and 0.25. Humming's per-layer and batched outputs matched exactly
+for these inputs. Further end-to-end quality and compatibility validation is
+needed before switching the runtime implementation.
+
+Humming is optional for this benchmark; install `humming-kernels` separately
+(the measurements used 0.1.16). With the same CUDA build dependencies and a
+captured fixture, run:
+
+```bash
+python scripts/bench_hadamard_compare.py --input kv.pt --tokens 1024 \
+  --output humming-1024.json
+```
+
 ## Measurement boundaries and validation
 
 - The benchmark wrapper includes the repository's `kvs_compress.cu` and invokes
