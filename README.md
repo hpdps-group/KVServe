@@ -168,25 +168,26 @@ TP-shard measurements do not replace a full distributed TP=2 inference test.
 The serving benchmarks exclude warmup and report measured request throughput;
 the transfer-time estimates from the codec benchmark are theoretical.
 
-`scripts/bench_compression_stages.py` measures the individual transform,
-quantizer, and lossless codec interfaces. Generate one input file and reuse it
-on both systems to compare NVIDIA with an AMD port. The built-in backend uses
-the legacy KVServe components (not the Mooncake CUDA runtime); an AMD backend
-must provide the adapter described in the script's docstring. GPU event and
+`scripts/bench_accelerated_stages.py` measures the current CUDA runtime's
+per-layer FWHT and quantization kernels plus preallocated nvCOMP ANS. Capture
+or provide a BF16 KV fixture and reuse it on both systems. An AMD port can
+provide the adapter described in the benchmark documentation. GPU event and
 synchronized wall times are reported separately.
 
 ```bash
-python scripts/bench_compression_stages.py --make-input shared_input.pt
-python scripts/bench_compression_stages.py --input shared_input.pt \
-  --codec nvcomp --output nvidia.json
+python scripts/capture_kv_fixture.py --model /path/to/model --text input.txt \
+  --tokens 8192 --output kv.pt
+python scripts/bench_accelerated_stages.py --input kv.pt --tokens 1024 \
+  --save-symbols symbols.pt --output nvidia.json
 ```
 
-For the built-in backend, install `fast_hadamard_transform` and nvCOMP in the
-GPU environment. Codec-only results use a shared quantized-symbol fixture,
-so their input bytes match on both platforms. See `--help` for input shape,
-axis, warmup, iteration, and external backend options.
-An example H100 run with raw results is documented in
-[`docs/benchmarks/h100-compression-stages-20261029.md`](docs/benchmarks/h100-compression-stages-20261029.md).
+Pass `--symbols-input symbols.pt` on the other platform to measure its codec
+on identical bytes. The benchmark excludes gather/sign, scatter and transport;
+it is not a full serving benchmark. The
+[benchmark notes and H100 results](docs/benchmarks/h100-accelerated-real-kv-20261029.md)
+describe the adapter contract, measurement boundaries and reproducible settings. The older
+`bench_compression_stages.py` measures legacy components and is not an
+accelerated-runtime comparison.
 
 If you do not install in editable mode, set `PYTHONPATH` before running tests:
 

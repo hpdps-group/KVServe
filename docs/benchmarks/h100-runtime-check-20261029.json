@@ -1,0 +1,21 @@
+{
+  "shape": [
+    28,
+    1024,
+    4,
+    128
+  ],
+  "device": "cuda:0",
+  "parts": {
+    "key": {
+      "symbol_bytes": 14680064,
+      "payload_bytes": 5493964,
+      "mismatches": 0
+    },
+    "value": {
+      "symbol_bytes": 14680064,
+      "payload_bytes": 4356042,
+      "mismatches": 0
+    }
+  }
+}
