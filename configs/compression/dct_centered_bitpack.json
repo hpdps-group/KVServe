@@ -1,0 +1,25 @@
+{
+  "enabled": true,
+  "pipeline": [
+    "transformer",
+    "quantizer",
+    "codec"
+  ],
+  "transformer_config": {
+    "transform_type": "dct",
+    "seed": 13107
+  },
+  "quantizer_config": {
+    "impl": "centered_codebook",
+    "key_bits": 3,
+    "value_bits": 3,
+    "group_size": 128,
+    "scale_refinements": 0,
+    "scale_alpha": 1.1,
+    "mean_dtype": "float32"
+  },
+  "codec_config": {
+    "codec_type": "bitpack",
+    "bitpack_bits": 3
+  }
+}

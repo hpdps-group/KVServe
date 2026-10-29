@@ -163,6 +163,8 @@ class KVCompressionAdapter:
         cfg_dict = dict(cfg_dict)
         if not cls._is_tilelang_fused(cfg_dict):
             return cfg_dict
+        if (cfg_dict.get("quantizer_config") or {}).get("impl") == "centered_codebook":
+            raise ValueError("centered_codebook cannot use the tilelang_fused implementation")
         pipeline = list(cfg_dict.get("pipeline", []))
         if "quantizer" not in pipeline:
             raise ValueError("tilelang_fused requires a quantizer pipeline stage")
@@ -197,6 +199,9 @@ class KVCompressionAdapter:
             if use_tilelang:
                 from kvserve_v1.compression.quantizer.tilelang_quantizer import TileLangFusedQuantizer
                 quantizer_cls = TileLangFusedQuantizer
+            elif (cfg_dict.get("quantizer_config") or {}).get("impl") == "centered_codebook":
+                from kvserve_v1.compression.quantizer.centered_codebook import CenteredCodebookQuantizer
+                quantizer_cls = CenteredCodebookQuantizer
             else:
                 from kvserve_v1.compression.quantizer.kvserve_quantizer import KVServeQuantizer
                 quantizer_cls = KVServeQuantizer

@@ -144,6 +144,15 @@ KVSERVE_LOAD_TIMEOUT_S=180 python tests/test_kvserve.py --mode tilelang_lc \
 Both engines must use matching code and compression profiles. The default
 compression mode continues to use the original quantizer and nvCOMP.
 
+### Optional DCT, Haar and centered codebook operators
+
+Install `pip install -e '.[operators]'` to use signed DCT-II, Haar random
+orthogonal rotations, and calibration-free centered Lloyd–Max quantization.
+These components compose through the existing modular pipeline and run on GPU;
+they do not change the default profile or the fixed-profile Mooncake runtime.
+See the [operator guide](docs/pluggable-operators.md) for configuration,
+auxiliary-byte costs and supported boundaries.
+
 ### Transport backpressure and benchmarks
 
 Synchronous sending remains the default. Set `KVSERVE_ASYNC_SEND=1` to allow

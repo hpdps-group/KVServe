@@ -1,16 +1,19 @@
-"""
-Transformer components for KV cache compression
-"""
+"""Optional transformer implementations, loaded only when selected."""
 
-# Placeholder for future transformer implementations
-# Components should inherit from kvserve_v1.compression.components.Transformer
-
-from kvserve_v1.compression.transformer.hadamard_func import HadamardTransform
-from kvserve_v1.compression.transformer.kvserve_transformer import KVServeTransformer
-
-__all__ = [
-    "HadamardTransform",
-    "KVServeTransformer",
-]
+__all__ = ["HadamardTransform", "KVServeTransformer", "OrthogonalTransform"]
 
 
+def __getattr__(name):
+    if name == "HadamardTransform":
+        from .hadamard_func import HadamardTransform
+
+        return HadamardTransform
+    if name == "KVServeTransformer":
+        from .kvserve_transformer import KVServeTransformer
+
+        return KVServeTransformer
+    if name == "OrthogonalTransform":
+        from .orthogonal import OrthogonalTransform
+
+        return OrthogonalTransform
+    raise AttributeError(name)
