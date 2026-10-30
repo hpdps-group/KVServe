@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-runtime = ["torch>=2.6", "numpy"]
+runtime = ["torch>=2.6", "numpy", "ninja"]
 runtime-cu12 = ["nvidia-nvcomp-cu12==5.3.0.16"]
 runtime-cu13 = ["nvidia-nvcomp-cu13==5.3.0.16"]
 fused = ["tilelang==0.1.9", "scipy>=1.10"]

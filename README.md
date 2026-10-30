@@ -194,6 +194,14 @@ For an optional Humming comparison on NVIDIA, install `humming-kernels`
 separately and run `scripts/bench_hadamard_compare.py` with the same fixture.
 The H100 results and limitations are documented below.
 
+The default runtime transform uses the fused native BF16 Hadamard kernel on
+both main and worker threads. `scripts/bench_default_hadamard.py` compares its
+Python and C++ per-layer calls on the same fixture and supports a throughput
+threshold via `--minimum-gb-s`. See the
+[runtime documentation](docs/compression-runtime.md) for build requirements.
+The [H100 fused-Hadamard results](docs/benchmarks/h100-fused-hadamard-20261030.md)
+include correctness checks, GPU timing and synchronized wall timing.
+
 Pass `--symbols-input symbols.pt` on the other platform to measure its codec
 on identical bytes. The benchmark excludes gather/sign, scatter and transport;
 it is not a full serving benchmark. The

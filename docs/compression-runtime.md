@@ -23,18 +23,40 @@ dependencies, including Humming.
 For KVServe development from a local checkout, use
 `uv pip install '.[runtime,runtime-cu13]'` instead.
 
-The runtime extras do not install `humming-kernels`. Set
-`KVSERVE_COMPRESSION_BACKEND=cpp` in both producer and consumer environments
-before startup to use the CUDA backend without Humming. It requires a CUDA
-compiler and ninja and builds during cache binding, before requests arrive.
+The runtime extras include ninja and do not install `humming-kernels`.
+Both execution backends use the same native fused BF16 Hadamard implementation
+on NVIDIA CUDA. A CUDA compiler is required; the extension builds during cache
+binding, before requests arrive. Set `KVSERVE_COMPRESSION_BACKEND=cpp` in both
+producer and consumer environments to drive the complete layer loop from C++.
 The runtime ships its JIT source files in the wheel. Importing `kvserve_v1` no
 longer loads the optional legacy vLLM connector; its existing exported name is
 resolved when requested.
 
-The backend defaults to `python`. If using that backend with a `transformer`
-stage, install Humming explicitly with `uv pip install 'humming-kernels>=0.1.16'`
-and set `KVSERVE_COMPRESSION_BACKEND=python`. Python pipelines without a
-`transformer` stage do not require Humming.
+The execution backend defaults to `python`. Its `transformer` stage uses the
+same fused CUDA kernel on main and Mooncake worker threads, with no Humming
+dependency or main-thread JIT restriction. It rounds each butterfly to BF16,
+preserving the previous C++ and worker-thread numerics, quantized symbols and
+wire layout. Unlike the former Python main-thread Humming call, it also uses
+this BF16 operation order. Head sizes 1 through 1024 (powers of two) need one
+kernel per layer; larger power-of-two sizes retain the two-buffer fallback.
+The inverse uses the same normalized transform. No additional device scratch
+is allocated in the request path.
+
+Use `scripts/bench_default_hadamard.py` with the same captured BF16 KV to
+measure the per-layer transform from the Python default and the C++ layer loop:
+
+```bash
+python scripts/bench_default_hadamard.py --input kv.pt --tokens 1024 \
+  --output hadamard.json --minimum-gb-s 200
+```
+
+The JSON records CUDA graph
+event timing and separate uncaptured synchronized wall timing. Sign generation,
+gathering, scatter and transport are outside this measurement. Add
+`--minimum-gb-s 200` to enforce a measured minimum for both K and V paths.
+The [H100 validation](benchmarks/h100-fused-hadamard-20261030.md) records
+338 GB/s GPU-event throughput for the 1,024-token Python default, along with
+separate host-inclusive wall times and full runtime correctness checks.
 
 The CUDA backend uses cooperative channel/token reductions and quantization,
 preserving the fixed-profile BF16 operation order and buffer layout. Each

@@ -11,6 +11,7 @@ only session handling, the ANS codec and buffer allocation.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,18 @@ KVS_PART_FIELDS = 19
 KVS_SECTION_FIELDS = 6
 
 _module: Any | None = None
+_module_lock = threading.Lock()
 
 
 def load_kvs_compress(device: torch.device | None = None) -> Any:
     """Build (once) and return the compiled extension module."""
+    if _module is not None:
+        return _module
+    with _module_lock:
+        return _load_kvs_compress(device)
+
+
+def _load_kvs_compress(device: torch.device | None) -> Any:
     global _module
     if _module is None:
         if torch.cuda.is_available():
@@ -45,6 +54,38 @@ def load_kvs_compress(device: torch.device | None = None) -> Any:
             verbose=False,
         )
     return _module
+
+
+def hadamard_transform(inputs: torch.Tensor, outputs: torch.Tensor) -> None:
+    """Use the same fused BF16 transform in Python and C++ execution plans."""
+    if (
+        not inputs.is_cuda
+        or inputs.ndim == 0
+        or inputs.dtype != torch.bfloat16
+        or outputs.dtype != inputs.dtype
+        or outputs.device != inputs.device
+        or outputs.shape != inputs.shape
+        or not inputs.is_contiguous()
+        or not outputs.is_contiguous()
+    ):
+        raise ValueError("Hadamard requires distinct contiguous BF16 CUDA buffers")
+    dim = inputs.shape[-1]
+    if dim < 1 or dim & (dim - 1):
+        raise ValueError("Hadamard requires a power-of-two head size")
+    if inputs.numel() == 0:
+        return
+    start, end = inputs.data_ptr(), outputs.data_ptr()
+    nbytes = inputs.numel() * inputs.element_size()
+    if start < end + nbytes and end < start + nbytes:
+        raise ValueError("Hadamard input and output must not overlap")
+    with torch.cuda.device(inputs.device):
+        load_kvs_compress(inputs.device).kvs_hadamard_flat(
+            inputs.data_ptr(),
+            outputs.data_ptr(),
+            inputs.numel() // dim,
+            dim,
+            torch.cuda.current_stream(inputs.device).cuda_stream,
+        )
 
 
 def enabled() -> bool:

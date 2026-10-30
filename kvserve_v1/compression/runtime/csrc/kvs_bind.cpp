@@ -8,6 +8,9 @@
 #include "kvs_compress.h"
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("kvs_hadamard_flat", &kvs_hadamard_flat,
+        "Normalized BF16 Hadamard on the supplied CUDA stream",
+        py::call_guard<py::gil_scoped_release>());
   // All entry points are pure C++/CUDA and must not hold the GIL: a single
   // encode launches hundreds of kernels, and holding the GIL for that long
   // stalls the engine main thread of this TP rank (and with it every other

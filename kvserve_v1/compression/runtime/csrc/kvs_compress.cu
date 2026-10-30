@@ -113,6 +113,101 @@ __global__ void scale_kernel(bf16* __restrict__ data, float scale,
   data[idx] = rn(to_f32(data[idx]) * scale);
 }
 
+// Keep each row in registers through all butterfly stages. A subgroup of
+// min(D, 32) lanes owns a row; larger rows use multiple registers per lane.
+// Rounding after every stage preserves the existing BF16 wire numerics.
+template <int D>
+__global__ void fwht_fused_kernel(const bf16* __restrict__ src,
+                                 bf16* __restrict__ dst, int64_t rows,
+                                 float scale) {
+  constexpr int width = D < kWarpSize ? D : kWarpSize;
+  constexpr int values = D / width;
+  const int lane = threadIdx.x % width;
+  const int64_t row = static_cast<int64_t>(blockIdx.x) * (kThreads / width) +
+                      threadIdx.x / width;
+  float v[values];
+#pragma unroll
+  for (int i = 0; i < values; ++i) {
+    v[i] = row < rows ? to_f32(src[row * D + i * width + lane]) : 0.0f;
+  }
+  // All lanes, including inactive tail rows, participate in the shuffles.
+#pragma unroll
+  for (int step = 1; step < width; step <<= 1) {
+#pragma unroll
+    for (int i = 0; i < values; ++i) {
+      const float other = __shfl_xor_sync(0xffffffff, v[i], step, width);
+      v[i] = to_f32(rn((lane & step) ? other - v[i] : v[i] + other));
+    }
+  }
+#pragma unroll
+  for (int step = 1; step < values; step <<= 1) {
+#pragma unroll
+    for (int base = 0; base < values; base += 2 * step) {
+#pragma unroll
+      for (int j = 0; j < step; ++j) {
+        const float a = v[base + j];
+        const float b = v[base + step + j];
+        v[base + j] = to_f32(rn(a + b));
+        v[base + step + j] = to_f32(rn(a - b));
+      }
+    }
+  }
+  if (row < rows) {
+#pragma unroll
+    for (int i = 0; i < values; ++i) {
+      dst[row * D + i * width + lane] = rn(v[i] * scale);
+    }
+  }
+}
+
+void launch_fwht(const bf16* input, bf16* output, bf16* scratch, int head_size,
+                 int64_t rows, cudaStream_t stream) {
+  if (head_size < 1 || (head_size & (head_size - 1))) {
+    throw std::invalid_argument("FWHT requires a power-of-two head size");
+  }
+  if (rows <= 0) return;
+  const float scale = 1.0f / std::sqrt(static_cast<float>(head_size));
+#define KVS_FWHT_CASE(D)                                                      \
+  case D:                                                                    \
+    fwht_fused_kernel<D><<<ceil_div(rows, kThreads / ((D) < 32 ? (D) : 32)),    \
+                            kThreads, 0, stream>>>(input, output, rows, scale); \
+    check_launch("fwht_fused");                                              \
+    return
+  switch (head_size) {
+    KVS_FWHT_CASE(1);
+    KVS_FWHT_CASE(2);
+    KVS_FWHT_CASE(4);
+    KVS_FWHT_CASE(8);
+    KVS_FWHT_CASE(16);
+    KVS_FWHT_CASE(32);
+    KVS_FWHT_CASE(64);
+    KVS_FWHT_CASE(128);
+    KVS_FWHT_CASE(256);
+    KVS_FWHT_CASE(512);
+    KVS_FWHT_CASE(1024);
+  }
+#undef KVS_FWHT_CASE
+  // Unusually large head sizes retain the previous two-buffer algorithm.
+  const int64_t count = rows * head_size;
+  const bf16* src = input;
+  bf16* dst = output;
+  for (int order = 1; order < head_size; order <<= 1) {
+    fwht_stage_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
+        src, dst, head_size, order, count);
+    check_launch("fwht_stage");
+    src = dst;
+    dst = dst == output ? scratch : output;
+  }
+  scale_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
+      const_cast<bf16*>(src), scale, count);
+  check_launch("fwht_scale");
+  if (src != output) {
+    const auto status = cudaMemcpyAsync(output, src, count * sizeof(bf16),
+                                        cudaMemcpyDeviceToDevice, stream);
+    if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
+  }
+}
+
 struct QuantParams {
   bf16 minimum;
   bf16 maximum;
@@ -470,7 +565,7 @@ int64_t tail_bytes_for_part(const PartDesc& p, int tail_tokens) {
   return bytes;
 }
 
-// Gather + sign + seven FWHT stages + scale; result in canonical A.
+// Gather + sign + fused normalized FWHT; result in canonical A.
 void gather_and_transform(const PartDesc& p, const int64_t* indices,
                           int64_t body_blocks, char* canonical_a,
                           char* canonical_b, cudaStream_t stream) {
@@ -489,25 +584,9 @@ void gather_and_transform(const PartDesc& p, const int64_t* indices,
     return;
   }
   const int64_t rows = body_blocks * p.kernel_tokens * p.num_heads;
-  const bf16* src = reinterpret_cast<const bf16*>(canonical_b);
-  bf16* dst = reinterpret_cast<bf16*>(canonical_a);
-  for (int order = 1; order < p.head_size; order <<= 1) {
-    fwht_stage_kernel<<<blocks, kThreads, 0, stream>>>(
-        src, dst, p.head_size, order, rows * p.head_size);
-    check_launch("fwht");
-    const bf16* next_src = dst;
-    dst = const_cast<bf16*>(src);
-    src = next_src;
-  }
-  const float scale = 1.0f / std::sqrt(static_cast<float>(p.head_size));
-  scale_kernel<<<blocks, kThreads, 0, stream>>>(const_cast<bf16*>(src), scale,
-                                                rows * p.head_size);
-  check_launch("scale");
-  if (src != reinterpret_cast<const bf16*>(canonical_a)) {
-    cudaMemcpyAsync(canonical_a, src, static_cast<size_t>(total) * 2,
-                    cudaMemcpyDeviceToDevice, stream);
-    check_launch("canonicalize");
-  }
+  launch_fwht(reinterpret_cast<const bf16*>(canonical_b),
+              reinterpret_cast<bf16*>(canonical_a),
+              reinterpret_cast<bf16*>(canonical_b), p.head_size, rows, stream);
 }
 
 void encode_part(const PartDesc& p, const int64_t* indices,
@@ -621,26 +700,9 @@ void decode_part(const PartDesc& p, const int64_t* indices,
 
     if (p.uses_transformer) {
       const int64_t rows = body_blocks * p.kernel_tokens * p.num_heads;
-      const int64_t count = rows * p.head_size;
-      const bf16* src = reinterpret_cast<const bf16*>(canonical_a);
-      bf16* dst = reinterpret_cast<bf16*>(canonical_b);
-      for (int order = 1; order < p.head_size; order <<= 1) {
-        fwht_stage_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
-            src, dst, p.head_size, order, count);
-        check_launch("ifwht");
-        const bf16* next_src = dst;
-        dst = const_cast<bf16*>(src);
-        src = next_src;
-      }
-      const float scale = 1.0f / std::sqrt(static_cast<float>(p.head_size));
-      scale_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
-          const_cast<bf16*>(src), scale, count);
-      check_launch("iscale");
-      if (src != reinterpret_cast<const bf16*>(canonical_b)) {
-        cudaMemcpyAsync(canonical_b, src, static_cast<size_t>(count) * 2,
-                        cudaMemcpyDeviceToDevice, stream);
-        check_launch("icanonicalize");
-      }
+      launch_fwht(reinterpret_cast<const bf16*>(canonical_a),
+                  reinterpret_cast<bf16*>(canonical_b),
+                  reinterpret_cast<bf16*>(canonical_a), p.head_size, rows, stream);
     } else {
       cudaMemcpyAsync(canonical_b, canonical_a, static_cast<size_t>(total) * 2,
                       cudaMemcpyDeviceToDevice, stream);
@@ -669,6 +731,15 @@ void decode_part(const PartDesc& p, const int64_t* indices,
 }
 
 }  // namespace
+
+extern "C" void kvs_hadamard_flat(int64_t input_ptr, int64_t output_ptr,
+                                    int64_t rows, int head_size,
+                                    int64_t stream_ptr) {
+  launch_fwht(reinterpret_cast<const bf16*>(input_ptr),
+              reinterpret_cast<bf16*>(output_ptr),
+              reinterpret_cast<bf16*>(input_ptr), head_size, rows,
+              reinterpret_cast<cudaStream_t>(stream_ptr));
+}
 
 extern "C" int kvs_encode_flat(int64_t meta_ptr, int64_t indices_ptr,
                                int64_t num_blocks, int64_t valid_tokens,

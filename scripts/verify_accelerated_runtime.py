@@ -9,6 +9,7 @@ layer-split runtime with 16-token blocks and verifies every K/V symbol.
 import argparse
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
@@ -20,13 +21,15 @@ def main():
     parser.add_argument("--symbols-input", required=True)
     parser.add_argument("--tokens", type=int, default=1024)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--backend", choices=("cpp", "python"), default="cpp")
+    parser.add_argument(
+        "--worker", action="store_true", help="Encode from a worker thread"
+    )
     parser.add_argument("--output")
     args = parser.parse_args()
     if args.tokens < 16 or args.tokens % 16 or not torch.cuda.is_available():
         parser.error("A CUDA GPU and token count divisible by 16 are required")
-    if os.environ.get("KVSERVE_COMPRESSION_BACKEND", "cpp") != "cpp":
-        parser.error("This check requires KVSERVE_COMPRESSION_BACKEND=cpp")
-    os.environ["KVSERVE_COMPRESSION_BACKEND"] = "cpp"
+    os.environ["KVSERVE_COMPRESSION_BACKEND"] = args.backend
     from kvserve_v1.compression.runtime import (
         CacheSpec,
         CompressionConfig,
@@ -68,7 +71,11 @@ def main():
             }
         }
     )
-    with torch.cuda.device(device), torch.inference_mode():
+    with (
+        torch.cuda.device(device),
+        torch.inference_mode(),
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
         plan = build_memory_plan(config, specs, num_layers=layers, device=device)
         runtime = CompressionRuntime(plan, "HND", 1, device)
         try:
@@ -87,13 +94,28 @@ def main():
                 caches[name] = torch.cat((k, v), dim=-1).to(device).contiguous()
             torch.cuda.synchronize(device)
             runtime.bind_kv_caches(caches, dict.fromkeys(names, 0))
-            result = {"shape": list(shape), "device": str(device), "parts": {}}
+            result = {
+                "shape": list(shape),
+                "device": str(device),
+                "parts": {},
+                "backend": args.backend,
+                "worker_thread": args.worker,
+            }
+
+            def encode(part):
+                with torch.cuda.device(device), torch.inference_mode():
+                    return runtime.encode(
+                        0,
+                        [list(range(blocks))],
+                        part,
+                        valid_tokens_by_group={0: args.tokens},
+                    )
+
             for part, name in enumerate(("key", "value")):
-                encoded = runtime.encode(
-                    0,
-                    [list(range(blocks))],
-                    part,
-                    valid_tokens_by_group={0: args.tokens},
+                encoded = (
+                    executor.submit(encode, part).result()
+                    if args.worker
+                    else encode(part)
                 )
                 encoded.event.synchronize()
                 base = runtime.layout.u8_base

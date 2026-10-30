@@ -7,25 +7,10 @@ void bench_fwht(int64_t input, int64_t output, int64_t scratch, int layers,
   auto stream = reinterpret_cast<cudaStream_t>(stream_ptr);
   const int64_t n = static_cast<int64_t>(tokens) * heads * dim;
   for (int layer = 0; layer < layers; ++layer) {
-    const bf16* src = reinterpret_cast<const bf16*>(input) + layer * n;
-    bf16* a = reinterpret_cast<bf16*>(output) + layer * n;
-    bf16* b = reinterpret_cast<bf16*>(scratch) + layer * n;
-    bf16* dst = a;
-    for (int order = 1; order < dim; order <<= 1) {
-      fwht_stage_kernel<<<blocks_for(n), kThreads, 0, stream>>>(src, dst, dim,
-                                                               order, n);
-      check_launch("bench_fwht");
-      src = dst;
-      dst = dst == a ? b : a;
-    }
-    scale_kernel<<<blocks_for(n), kThreads, 0, stream>>>(
-        const_cast<bf16*>(src), 1.0f / std::sqrt(static_cast<float>(dim)), n);
-    check_launch("bench_scale");
-    if (src != a) {
-      cudaError_t status = cudaMemcpyAsync(a, src, n * sizeof(bf16),
-                                          cudaMemcpyDeviceToDevice, stream);
-      if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
-    }
+    launch_fwht(reinterpret_cast<const bf16*>(input) + layer * n,
+                reinterpret_cast<bf16*>(output) + layer * n,
+                reinterpret_cast<bf16*>(scratch) + layer * n,
+                dim, static_cast<int64_t>(tokens) * heads, stream);
   }
 }
 

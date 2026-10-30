@@ -1,5 +1,9 @@
 # Accelerated compression stages on real Qwen KV
 
+These are historical measurements. The default Hadamard implementation was
+subsequently replaced by the fused kernel; see the
+[2026-10-30 results](h100-fused-hadamard-20261030.md) for its validation and timing.
+
 Measured on 2026-10-29 using an NVIDIA H100 PCIe (80 GB), driver 610.43.02,
 PyTorch 2.13.0+cu130 and nvCOMP 5.3.0.16. The GPU was idle before the run;
 it was not exclusively reserved. Samples were collected with one-second GPU
@@ -74,9 +78,10 @@ Humming, and 0.088 ms for batched Humming. These are stage microbenchmarks,
 not end-to-end serving speeds. The batched experiment uses one contiguous
 28-layer input and does not include the cost of creating such a batch.
 
-KVServe's Python transform calls Humming on the main thread, while the current
-Mooncake worker-thread path uses the PyTorch fallback. The C++/CUDA runtime
-uses its own kernels; a batched Humming runtime is not implemented. Results
+At the measured revision (`90bb974`), KVServe's Python transform called Humming
+on the main thread, while its
+Mooncake worker-thread path used the PyTorch fallback. The C++/CUDA runtime
+used its own kernels; a batched Humming runtime was not implemented. Results
 are not bit-identical: for 1,024-token K, mean and maximum absolute differences
 between Humming and current CUDA were 0.01295 and 3.0, respectively; for V they
 were 0.00329 and 0.25. Humming's per-layer and batched outputs matched exactly

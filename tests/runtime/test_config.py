@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 import torch
+
 from kvserve_v1.compression.runtime import CacheSpec, CompressionConfig, cpp_backend
 from kvserve_v1.compression.runtime import pipeline as compression_pipeline
 from kvserve_v1.compression.runtime.layout import build_compression_layout
@@ -79,6 +80,23 @@ def test_unknown_explicit_backend_does_not_silently_use_python(monkeypatch):
         cpp_backend.enabled()
 
 
+def test_cpu_transform_without_humming(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "humming", None)
+    monkeypatch.setitem(sys.modules, "humming.ops", None)
+    matrix = torch.ones(1, 1, dtype=torch.float64)
+    for _ in range(3):
+        matrix = torch.cat(
+            (torch.cat((matrix, matrix), 1), torch.cat((matrix, -matrix), 1)), 0
+        )
+    source = torch.randint(-1, 2, (33, 8)).to(torch.bfloat16)
+    expected = ((source.double() @ matrix) / (8**0.5)).to(torch.bfloat16)
+    output = torch.empty_like(source)
+    compression_pipeline.CompressionPipeline._hadamard_transform(source, output, 8)
+    torch.testing.assert_close(output, expected, rtol=0, atol=0)
+
+
 def test_cpp_jit_uses_worker_device_and_respects_explicit_arch(monkeypatch):
     device = torch.device("cuda", 3)
     capability = Mock(return_value=(12, 0))
@@ -97,8 +115,14 @@ def test_cpp_jit_uses_worker_device_and_respects_explicit_arch(monkeypatch):
     assert os.environ["TORCH_CUDA_ARCH_LIST"] == "9.0;12.0"
 
 
-def test_cpp_cache_binding_loads_backend_and_keeps_asymmetric_kv_views(monkeypatch):
-    monkeypatch.setenv("KVSERVE_COMPRESSION_BACKEND", "cpp")
+@pytest.mark.parametrize(
+    "backend,stages",
+    [("cpp", ("quantizer",)), ("python", ("transformer", "quantizer"))],
+)
+def test_cache_binding_loads_backend_and_keeps_asymmetric_kv_views(
+    monkeypatch, backend, stages
+):
+    monkeypatch.setenv("KVSERVE_COMPRESSION_BACKEND", backend)
     load = Mock()
     monkeypatch.setattr(cpp_backend, "load_kvs_compress", load)
     parts = tuple(
@@ -127,7 +151,7 @@ def test_cpp_cache_binding_loads_backend_and_keeps_asymmetric_kv_views(monkeypat
         SimpleNamespace(device=device),
         {},
         {},
-        stages=("quantizer",),
+        stages=stages,
     )
     cache = torch.arange(96, dtype=torch.bfloat16).reshape(2, 2, 1, 24)
     pipeline.bind_kv_caches({"layer": cache})

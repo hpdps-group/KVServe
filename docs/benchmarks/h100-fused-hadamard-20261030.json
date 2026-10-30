@@ -1,0 +1,1230 @@
+{
+  "physical_gpu": 1,
+  "tests": [
+    {
+      "label": "runtime-python",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "-m",
+        "pytest",
+        "tests/runtime/test_config.py",
+        "tests/runtime/test_gpu.py",
+        "-q"
+      ],
+      "backend": "python",
+      "returncode": 0,
+      "seconds": 8.154902837239206,
+      "output": "....................................................................     [100%]\n68 passed in 7.12s\n"
+    },
+    {
+      "label": "real-kv-worker-python",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/verify_accelerated_runtime.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--symbols-input",
+        "/tmp/kvstage-h100-fOE7eZ01/symbols-1024.pt",
+        "--tokens",
+        "1024",
+        "--backend",
+        "python",
+        "--worker",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/symbols-python.json"
+      ],
+      "backend": "python",
+      "returncode": 0,
+      "seconds": 3.886743288487196,
+      "output": "{\n  \"shape\": [\n    28,\n    1024,\n    4,\n    128\n  ],\n  \"device\": \"cuda:0\",\n  \"parts\": {\n    \"key\": {\n      \"symbol_bytes\": 14680064,\n      \"payload_bytes\": 5493964,\n      \"mismatches\": 0\n    },\n    \"value\": {\n      \"symbol_bytes\": 14680064,\n      \"payload_bytes\": 4356042,\n      \"mismatches\": 0\n    }\n  },\n  \"backend\": \"python\",\n  \"worker_thread\": true\n}\n",
+      "result": {
+        "shape": [
+          28,
+          1024,
+          4,
+          128
+        ],
+        "device": "cuda:0",
+        "parts": {
+          "key": {
+            "symbol_bytes": 14680064,
+            "payload_bytes": 5493964,
+            "mismatches": 0
+          },
+          "value": {
+            "symbol_bytes": 14680064,
+            "payload_bytes": 4356042,
+            "mismatches": 0
+          }
+        },
+        "backend": "python",
+        "worker_thread": true
+      }
+    },
+    {
+      "label": "runtime-cpp",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "-m",
+        "pytest",
+        "tests/runtime/test_config.py",
+        "tests/runtime/test_gpu.py",
+        "-q"
+      ],
+      "backend": "cpp",
+      "returncode": 0,
+      "seconds": 6.970910236239433,
+      "output": "....................................................................     [100%]\n68 passed in 5.98s\n"
+    },
+    {
+      "label": "real-kv-worker-cpp",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/verify_accelerated_runtime.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--symbols-input",
+        "/tmp/kvstage-h100-fOE7eZ01/symbols-1024.pt",
+        "--tokens",
+        "1024",
+        "--backend",
+        "cpp",
+        "--worker",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/symbols-cpp.json"
+      ],
+      "backend": "cpp",
+      "returncode": 0,
+      "seconds": 2.2718044947832823,
+      "output": "{\n  \"shape\": [\n    28,\n    1024,\n    4,\n    128\n  ],\n  \"device\": \"cuda:0\",\n  \"parts\": {\n    \"key\": {\n      \"symbol_bytes\": 14680064,\n      \"payload_bytes\": 5493964,\n      \"mismatches\": 0\n    },\n    \"value\": {\n      \"symbol_bytes\": 14680064,\n      \"payload_bytes\": 4356042,\n      \"mismatches\": 0\n    }\n  },\n  \"backend\": \"cpp\",\n  \"worker_thread\": true\n}\n",
+      "result": {
+        "shape": [
+          28,
+          1024,
+          4,
+          128
+        ],
+        "device": "cuda:0",
+        "parts": {
+          "key": {
+            "symbol_bytes": 14680064,
+            "payload_bytes": 5493964,
+            "mismatches": 0
+          },
+          "value": {
+            "symbol_bytes": 14680064,
+            "payload_bytes": 4356042,
+            "mismatches": 0
+          }
+        },
+        "backend": "cpp",
+        "worker_thread": true
+      }
+    },
+    {
+      "label": "memcheck",
+      "command": [
+        "/usr/local/cuda/bin/compute-sanitizer",
+        "--tool",
+        "memcheck",
+        "--error-exitcode",
+        "99",
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "-m",
+        "pytest",
+        "tests/runtime/test_hadamard.py",
+        "-q",
+        "-k",
+        "(exact_bf16_reference and 33) or default_transform_in_workers_and_graph_without_humming"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 3.283963130787015,
+      "output": "========= COMPUTE-SANITIZER\n.............                                                            [100%]\n13 passed, 38 deselected in 2.33s\n========= ERROR SUMMARY: 0 errors\n"
+    },
+    {
+      "label": "bench-1024-run1",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "1024",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-1024-run1.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 2.8253179797902703,
+      "output": "key cpp_per_layer: 338.19 GB/s 0.0868 ms; wall 0.1291 ms\nkey python_default: 338.01 GB/s 0.0869 ms; wall 0.3881 ms\nvalue cpp_per_layer: 339.84 GB/s 0.0864 ms; wall 0.1281 ms\nvalue python_default: 339.19 GB/s 0.0866 ms; wall 0.3854 ms\n"
+    },
+    {
+      "label": "bench-1024-run2",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "1024",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-1024-run2.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 2.827734872698784,
+      "output": "key cpp_per_layer: 338.69 GB/s 0.0867 ms; wall 0.1287 ms\nkey python_default: 338.41 GB/s 0.0868 ms; wall 0.4030 ms\nvalue cpp_per_layer: 336.28 GB/s 0.0873 ms; wall 0.1285 ms\nvalue python_default: 336.65 GB/s 0.0872 ms; wall 0.3960 ms\n"
+    },
+    {
+      "label": "bench-1024-run3",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "1024",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-1024-run3.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 2.8231976134702563,
+      "output": "key cpp_per_layer: 338.16 GB/s 0.0868 ms; wall 0.1291 ms\nkey python_default: 338.26 GB/s 0.0868 ms; wall 0.3868 ms\nvalue cpp_per_layer: 340.14 GB/s 0.0863 ms; wall 0.1281 ms\nvalue python_default: 338.89 GB/s 0.0866 ms; wall 0.3846 ms\n"
+    },
+    {
+      "label": "bench-8192-run1",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "8192",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-8192-run1.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 3.506040227599442,
+      "output": "key cpp_per_layer: 701.75 GB/s 0.3347 ms; wall 0.3706 ms\nkey python_default: 703.35 GB/s 0.3339 ms; wall 0.3911 ms\nvalue cpp_per_layer: 705.05 GB/s 0.3331 ms; wall 0.3691 ms\nvalue python_default: 704.89 GB/s 0.3332 ms; wall 0.3891 ms\n"
+    },
+    {
+      "label": "bench-8192-run2",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "8192",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-8192-run2.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 3.4947967948392034,
+      "output": "key cpp_per_layer: 699.97 GB/s 0.3356 ms; wall 0.3718 ms\nkey python_default: 701.70 GB/s 0.3347 ms; wall 0.4021 ms\nvalue cpp_per_layer: 703.92 GB/s 0.3337 ms; wall 0.3695 ms\nvalue python_default: 702.92 GB/s 0.3342 ms; wall 0.3962 ms\n"
+    },
+    {
+      "label": "bench-8192-run3",
+      "command": [
+        "/data/codex_rdma_20261012/.venv/bin/python",
+        "scripts/bench_default_hadamard.py",
+        "--input",
+        "/tmp/kvstage-h100-fOE7eZ01/qwen2-real-kv-final.pt",
+        "--tokens",
+        "8192",
+        "--minimum-gb-s",
+        "200",
+        "--output",
+        "/tmp/kvserve-fwht-20261030/bench-8192-run3.json"
+      ],
+      "backend": null,
+      "returncode": 0,
+      "seconds": 3.5092250192537904,
+      "output": "key cpp_per_layer: 698.65 GB/s 0.3362 ms; wall 0.3713 ms\nkey python_default: 701.52 GB/s 0.3348 ms; wall 0.4046 ms\nvalue cpp_per_layer: 702.65 GB/s 0.3343 ms; wall 0.3703 ms\nvalue python_default: 700.06 GB/s 0.3355 ms; wall 0.3972 ms\n"
+    }
+  ],
+  "runs": [
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "8f78155588a134c31bca87245e58aef5c9904f09228bc64dd0dba05939c0cc45",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.08681600093841553,
+              "event_samples_ms": [
+                0.09944319725036621,
+                0.08727679848670959,
+                0.08691840171813965,
+                0.08663039803504943,
+                0.08681600093841553,
+                0.08666880130767822,
+                0.08662400245666504
+              ],
+              "wall_median_ms": 0.12910310178995132,
+              "wall_samples_ms": [
+                0.13041198253631592,
+                0.12910310178995132,
+                0.12916363775730133,
+                0.12854859232902527,
+                0.1291561871767044,
+                0.12822896242141724,
+                0.12823157012462616
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.18798012623415,
+              "output_gb_s": 338.18798012623415
+            },
+            "python_default": {
+              "event_median_ms": 0.0868607997894287,
+              "event_samples_ms": [
+                0.09738879799842834,
+                0.0869376003742218,
+                0.0868224024772644,
+                0.08674560189247131,
+                0.0868607997894287,
+                0.08700799942016602,
+                0.08671360015869141
+              ],
+              "wall_median_ms": 0.3881065174937248,
+              "wall_samples_ms": [
+                0.3948703408241272,
+                0.3932395949959755,
+                0.3893347457051277,
+                0.387563556432724,
+                0.38582440465688705,
+                0.3880957141518593,
+                0.3881065174937248
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.01355814332766,
+              "output_gb_s": 338.01355814332766
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "dd3a66dfcc72763a209f69e3c708ff42bcf0dedc069416028710b0e562dfd255",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.08639360070228577,
+              "event_samples_ms": [
+                0.09488639831542969,
+                0.0867904007434845,
+                0.08639360070228577,
+                0.08629119992256165,
+                0.08639360070228577,
+                0.08642560243606567,
+                0.08627840280532836
+              ],
+              "wall_median_ms": 0.1281319186091423,
+              "wall_samples_ms": [
+                0.129581056535244,
+                0.1281319186091423,
+                0.12827608734369278,
+                0.12780260294675827,
+                0.12821536511182785,
+                0.1279914751648903,
+                0.128055177628994
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 339.84146697595855,
+              "output_gb_s": 339.84146697595855
+            },
+            "python_default": {
+              "event_median_ms": 0.08655999898910523,
+              "event_samples_ms": [
+                0.09399679899215699,
+                0.08679680228233337,
+                0.0865343987941742,
+                0.08654720187187195,
+                0.08650239706039428,
+                0.08664320111274719,
+                0.08655999898910523
+              ],
+              "wall_median_ms": 0.38538239896297455,
+              "wall_samples_ms": [
+                0.3884976729750633,
+                0.38411132991313934,
+                0.3865426406264305,
+                0.38633495569229126,
+                0.38538239896297455,
+                0.3845764324069023,
+                0.3850683569908142
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 339.1881740166769,
+              "output_gb_s": 339.1881740166769
+            }
+          }
+        }
+      ],
+      "independent_run": 1
+    },
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "8f78155588a134c31bca87245e58aef5c9904f09228bc64dd0dba05939c0cc45",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.08668799996376038,
+              "event_samples_ms": [
+                0.09916160106658936,
+                0.08730239868164062,
+                0.0868224024772644,
+                0.08668799996376038,
+                0.08663679957389832,
+                0.08664960265159607,
+                0.08666880130767822
+              ],
+              "wall_median_ms": 0.1286860555410385,
+              "wall_samples_ms": [
+                0.13045929372310638,
+                0.1287546008825302,
+                0.12881122529506683,
+                0.1286860555410385,
+                0.1283818855881691,
+                0.12843869626522064,
+                0.1280287280678749
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.68733864287907,
+              "output_gb_s": 338.68733864287907
+            },
+            "python_default": {
+              "event_median_ms": 0.08675839900970458,
+              "event_samples_ms": [
+                0.09764479994773864,
+                0.08699520230293274,
+                0.08673920035362244,
+                0.08675839900970458,
+                0.08668799996376038,
+                0.08661119937896729,
+                0.08696960210800171
+              ],
+              "wall_median_ms": 0.40298011153936386,
+              "wall_samples_ms": [
+                0.40737632662057877,
+                0.40298011153936386,
+                0.402611680328846,
+                0.4044746980071068,
+                0.4043746739625931,
+                0.3964904695749283,
+                0.3990776836872101
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.4125149279881,
+              "output_gb_s": 338.4125149279881
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "dd3a66dfcc72763a209f69e3c708ff42bcf0dedc069416028710b0e562dfd255",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.08730880022048951,
+              "event_samples_ms": [
+                0.09694079756736755,
+                0.0873856008052826,
+                0.08731520175933838,
+                0.08730880022048951,
+                0.08711040019989014,
+                0.08725759983062745,
+                0.0870848000049591
+              ],
+              "wall_median_ms": 0.12854840606451035,
+              "wall_samples_ms": [
+                0.1299731433391571,
+                0.129072368144989,
+                0.12863371521234512,
+                0.12854840606451035,
+                0.12832675129175186,
+                0.12848544865846634,
+                0.12837089598178864
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 336.2791371070726,
+              "output_gb_s": 336.2791371070726
+            },
+            "python_default": {
+              "event_median_ms": 0.08721280097961426,
+              "event_samples_ms": [
+                0.09464319944381713,
+                0.08746240139007569,
+                0.08713600039482117,
+                0.08728960156440735,
+                0.08721280097961426,
+                0.08717439770698547,
+                0.08717439770698547
+              ],
+              "wall_median_ms": 0.3959720954298973,
+              "wall_samples_ms": [
+                0.40121637284755707,
+                0.3966551274061203,
+                0.39685387164354324,
+                0.3951366990804672,
+                0.3941887989640236,
+                0.3952404484152794,
+                0.3959720954298973
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 336.649295404041,
+              "output_gb_s": 336.649295404041
+            }
+          }
+        }
+      ],
+      "independent_run": 2
+    },
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "8f78155588a134c31bca87245e58aef5c9904f09228bc64dd0dba05939c0cc45",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.0868224024772644,
+              "event_samples_ms": [
+                0.09900799989700318,
+                0.08732799887657165,
+                0.08688639998435974,
+                0.0868224024772644,
+                0.08663039803504943,
+                0.08677120208740234,
+                0.08662400245666504
+              ],
+              "wall_median_ms": 0.12907478958368301,
+              "wall_samples_ms": [
+                0.13045631349086761,
+                0.12926049530506134,
+                0.1287488266825676,
+                0.12881644070148468,
+                0.12907814234495163,
+                0.12907478958368301,
+                0.12821778655052185
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.16304504690874,
+              "output_gb_s": 338.16304504690874
+            },
+            "python_default": {
+              "event_median_ms": 0.08679680228233337,
+              "event_samples_ms": [
+                0.09747200012207032,
+                0.08705919981002808,
+                0.08684160113334656,
+                0.08679680228233337,
+                0.08665599822998046,
+                0.08669440150260925,
+                0.0866047978401184
+              ],
+              "wall_median_ms": 0.38681887090206146,
+              "wall_samples_ms": [
+                0.39248429238796234,
+                0.38681887090206146,
+                0.3863649442791939,
+                0.38899779319763184,
+                0.386781245470047,
+                0.3840632736682892,
+                0.38695409893989563
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.2627842036983,
+              "output_gb_s": 338.2627842036983
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            1024,
+            4,
+            128
+          ],
+          "input_sha256": "dd3a66dfcc72763a209f69e3c708ff42bcf0dedc069416028710b0e562dfd255",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.08631680011749268,
+              "event_samples_ms": [
+                0.0945472002029419,
+                0.0865343987941742,
+                0.08642560243606567,
+                0.08621439933776856,
+                0.08629119992256165,
+                0.08629760146141052,
+                0.08631680011749268
+              ],
+              "wall_median_ms": 0.12811198830604553,
+              "wall_samples_ms": [
+                0.12948624789714813,
+                0.12904498726129532,
+                0.12825243175029755,
+                0.12811198830604553,
+                0.12793466448783875,
+                0.12784656137228012,
+                0.1279253512620926
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 340.14384175543563,
+              "output_gb_s": 340.14384175543563
+            },
+            "python_default": {
+              "event_median_ms": 0.08663679957389832,
+              "event_samples_ms": [
+                0.09444479942321778,
+                0.08673920035362244,
+                0.08663679957389832,
+                0.08663039803504943,
+                0.08654720187187195,
+                0.0868287980556488,
+                0.08643839955329895
+              ],
+              "wall_median_ms": 0.3846410661935806,
+              "wall_samples_ms": [
+                0.38635488599538803,
+                0.3841860219836235,
+                0.3849383443593979,
+                0.3855150192975998,
+                0.38382019847631454,
+                0.38273725658655167,
+                0.3846410661935806
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 29360128,
+              "output_bytes": 29360128,
+              "input_gb_s": 338.88749520296835,
+              "output_gb_s": 338.88749520296835
+            }
+          }
+        }
+      ],
+      "independent_run": 3
+    },
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "e54f3fb66e4870b37ad58686a23710fd9034d26cf775c213efa4217365b6b470",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.3347071886062622,
+              "event_samples_ms": [
+                0.3446336030960083,
+                0.33355519771575926,
+                0.3347071886062622,
+                0.3346944093704224,
+                0.33448960781097414,
+                0.337062406539917,
+                0.3359231948852539
+              ],
+              "wall_median_ms": 0.3705594688653946,
+              "wall_samples_ms": [
+                0.37256553769111633,
+                0.3700556233525276,
+                0.3705594688653946,
+                0.3714796155691147,
+                0.3706645220518112,
+                0.36983564496040344,
+                0.37055816501379013
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 701.7507600540537,
+              "output_gb_s": 701.7507600540537
+            },
+            "python_default": {
+              "event_median_ms": 0.33394560813903806,
+              "event_samples_ms": [
+                0.3371263980865479,
+                0.33262081146240235,
+                0.33394560813903806,
+                0.33476479053497316,
+                0.33194239139556886,
+                0.33626880645751955,
+                0.33150079250335696
+              ],
+              "wall_median_ms": 0.39109233766794205,
+              "wall_samples_ms": [
+                0.4057610407471657,
+                0.39357375353574753,
+                0.39337389171123505,
+                0.39109233766794205,
+                0.3903154283761978,
+                0.3875182941555977,
+                0.3904901444911957
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 703.3511394532472,
+              "output_gb_s": 703.3511394532472
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "587a0c4abf1832a5c26f8d2313118aa4dcc248b2b2baaa2d3b5f5bd78fed11ee",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.3331392049789429,
+              "event_samples_ms": [
+                0.36947200298309324,
+                0.3346944093704224,
+                0.3331392049789429,
+                0.33306241035461426,
+                0.333407998085022,
+                0.331712007522583,
+                0.33124480247497556
+              ],
+              "wall_median_ms": 0.36913231015205383,
+              "wall_samples_ms": [
+                0.37117917090654373,
+                0.36962684243917465,
+                0.36908388137817383,
+                0.36866459995508194,
+                0.36795418709516525,
+                0.36913231015205383,
+                0.3709021955728531
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 705.0536847347234,
+              "output_gb_s": 705.0536847347234
+            },
+            "python_default": {
+              "event_median_ms": 0.3332159996032715,
+              "event_samples_ms": [
+                0.33573760986328127,
+                0.33459839820861814,
+                0.3332159996032715,
+                0.33289599418640137,
+                0.3327552080154419,
+                0.33393919467926025,
+                0.33320319652557373
+              ],
+              "wall_median_ms": 0.3890546038746834,
+              "wall_samples_ms": [
+                0.3918290138244629,
+                0.3904137760400772,
+                0.390755757689476,
+                0.3890546038746834,
+                0.38789473474025726,
+                0.38902852684259415,
+                0.3889864310622215
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 704.8911945394292,
+              "output_gb_s": 704.8911945394292
+            }
+          }
+        }
+      ],
+      "independent_run": 1
+    },
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "e54f3fb66e4870b37ad58686a23710fd9034d26cf775c213efa4217365b6b470",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.3355583906173706,
+              "event_samples_ms": [
+                0.3421184062957764,
+                0.3355583906173706,
+                0.3365056037902832,
+                0.3317951917648315,
+                0.33678719997406004,
+                0.3344063997268677,
+                0.3355520009994507
+              ],
+              "wall_median_ms": 0.37176739424467087,
+              "wall_samples_ms": [
+                0.37357136607170105,
+                0.37176739424467087,
+                0.37203896790742874,
+                0.3711339086294174,
+                0.3709521144628525,
+                0.3718513995409012,
+                0.3709908574819565
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 699.9706476355984,
+              "output_gb_s": 699.9706476355984
+            },
+            "python_default": {
+              "event_median_ms": 0.33473279476165774,
+              "event_samples_ms": [
+                0.3384255886077881,
+                0.33642239570617677,
+                0.3348160028457642,
+                0.3345088005065918,
+                0.33473279476165774,
+                0.33143680095672606,
+                0.3337599992752075
+              ],
+              "wall_median_ms": 0.40214918553829193,
+              "wall_samples_ms": [
+                0.41197817772626877,
+                0.40214918553829193,
+                0.40362365543842316,
+                0.40238983929157257,
+                0.39638858288526535,
+                0.3963856026530266,
+                0.39661526679992676
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 701.6970780148508,
+              "output_gb_s": 701.6970780148508
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "587a0c4abf1832a5c26f8d2313118aa4dcc248b2b2baaa2d3b5f5bd78fed11ee",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.33367679119110105,
+              "event_samples_ms": [
+                0.37131519317626954,
+                0.33367679119110105,
+                0.33127679824829104,
+                0.33427839279174804,
+                0.333190393447876,
+                0.3361407995223999,
+                0.3326656103134155
+              ],
+              "wall_median_ms": 0.36950651556253433,
+              "wall_samples_ms": [
+                0.37208255380392075,
+                0.3702860325574875,
+                0.36950651556253433,
+                0.37023965269327164,
+                0.3693690523505211,
+                0.3694508224725723,
+                0.3692079335451126
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 703.917773728172,
+              "output_gb_s": 703.917773728172
+            },
+            "python_default": {
+              "event_median_ms": 0.3341504096984863,
+              "event_samples_ms": [
+                0.33452160358428956,
+                0.3339711904525757,
+                0.3341504096984863,
+                0.33418879508972166,
+                0.3354304075241089,
+                0.33189120292663576,
+                0.33349759578704835
+              ],
+              "wall_median_ms": 0.3962017595767975,
+              "wall_samples_ms": [
+                0.4088928923010826,
+                0.40072333067655563,
+                0.3962017595767975,
+                0.3959406167268753,
+                0.39684902876615524,
+                0.3952540457248688,
+                0.3944406285881996
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 702.9200539120692,
+              "output_gb_s": 702.9200539120692
+            }
+          }
+        }
+      ],
+      "independent_run": 2
+    },
+    {
+      "gpu": "NVIDIA H100 PCIe",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "production_cuda_sha256": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+      "script_sha256": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+      "warmup": 5,
+      "repeats": 7,
+      "batch": 5,
+      "scope": "per-layer normalized FWHT only; signed contiguous input; no gather or transport",
+      "results": [
+        {
+          "part": "key",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "e54f3fb66e4870b37ad58686a23710fd9034d26cf775c213efa4217365b6b470",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.3361920118331909,
+              "event_samples_ms": [
+                0.3448319911956787,
+                0.3370752096176147,
+                0.3337984085083008,
+                0.3352895975112915,
+                0.3379647970199585,
+                0.3323967933654785,
+                0.3361920118331909
+              ],
+              "wall_median_ms": 0.3713347017765045,
+              "wall_samples_ms": [
+                0.3735169768333435,
+                0.37137605249881744,
+                0.3710968419909477,
+                0.37084538489580154,
+                0.3713537007570267,
+                0.37106163799762726,
+                0.3713347017765045
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 698.6514126830039,
+              "output_gb_s": 698.6514126830039
+            },
+            "python_default": {
+              "event_median_ms": 0.3348160028457642,
+              "event_samples_ms": [
+                0.3396415948867798,
+                0.3348160028457642,
+                0.3360447883605957,
+                0.33178880214691164,
+                0.3336639881134033,
+                0.3336832046508789,
+                0.3352384090423584
+              ],
+              "wall_median_ms": 0.40456540882587433,
+              "wall_samples_ms": [
+                0.4156295210123062,
+                0.4066102206707001,
+                0.4056766629219055,
+                0.40454473346471786,
+                0.40456540882587433,
+                0.4020102322101593,
+                0.39835404604673386
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 701.5226930721108,
+              "output_gb_s": 701.5226930721108
+            }
+          }
+        },
+        {
+          "part": "value",
+          "shape": [
+            28,
+            8192,
+            4,
+            128
+          ],
+          "input_sha256": "587a0c4abf1832a5c26f8d2313118aa4dcc248b2b2baaa2d3b5f5bd78fed11ee",
+          "timings": {
+            "cpp_per_layer": {
+              "event_median_ms": 0.33427839279174804,
+              "event_samples_ms": [
+                0.37115519046783446,
+                0.33603200912475584,
+                0.33427839279174804,
+                0.33320960998535154,
+                0.3318336009979248,
+                0.33518080711364745,
+                0.33176960945129397
+              ],
+              "wall_median_ms": 0.3702668473124504,
+              "wall_samples_ms": [
+                0.37125740200281143,
+                0.36977119743824005,
+                0.3693697974085808,
+                0.3702668473124504,
+                0.3694659098982811,
+                0.37253163754940033,
+                0.37245340645313263
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 702.6509312743059,
+              "output_gb_s": 702.6509312743059
+            },
+            "python_default": {
+              "event_median_ms": 0.3355135917663574,
+              "event_samples_ms": [
+                0.338374400138855,
+                0.3357055902481079,
+                0.3342400074005127,
+                0.3351936101913452,
+                0.3355135917663574,
+                0.3357952117919922,
+                0.33356800079345705
+              ],
+              "wall_median_ms": 0.39715878665447235,
+              "wall_samples_ms": [
+                0.42049940675497055,
+                0.3937041386961937,
+                0.39737410843372345,
+                0.3966456279158592,
+                0.3973737359046936,
+                0.3967553377151489,
+                0.39715878665447235
+              ],
+              "event_mode": "cuda_graph",
+              "input_bytes": 234881024,
+              "output_bytes": 234881024,
+              "input_gb_s": 700.0641099617949,
+              "output_gb_s": 700.0641099617949
+            }
+          }
+        }
+      ],
+      "independent_run": 3
+    }
+  ],
+  "monitor": [
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:32.980, NVIDIA H100 PCIe, 2, 124, 1755, 89.65"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:34.007, NVIDIA H100 PCIe, 0, 124, 1755, 91.45"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:35.032, NVIDIA H100 PCIe, 0, 873, 1755, 90.47"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:36.057, NVIDIA H100 PCIe, 0, 124, 1755, 94.09"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:37.082, NVIDIA H100 PCIe, 0, 124, 1755, 91.77"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:38.108, NVIDIA H100 PCIe, 17, 873, 1755, 94.36"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:39.133, NVIDIA H100 PCIe, 0, 124, 1755, 90.93"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:40.158, NVIDIA H100 PCIe, 0, 124, 1755, 91.81"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:41.183, NVIDIA H100 PCIe, 0, 873, 1755, 94.18"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:42.209, NVIDIA H100 PCIe, 0, 124, 1755, 91.60"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:43.236, NVIDIA H100 PCIe, 7, 1853, 1755, 74.12"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:44.261, NVIDIA H100 PCIe, 0, 1853, 1755, 121.35"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:45.288, NVIDIA H100 PCIe, 0, 124, 1755, 91.10"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:46.313, NVIDIA H100 PCIe, 0, 124, 1755, 92.45"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:47.336, NVIDIA H100 PCIe, 41, 1853, 1755, 106.61"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:48.360, NVIDIA H100 PCIe, 0, 1853, 1755, 106.18"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:49.384, NVIDIA H100 PCIe, 0, 124, 1755, 92.72"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:50.408, NVIDIA H100 PCIe, 0, 1853, 1755, 74.71"
+    },
+    {
+      "returncode": 0,
+      "sample": "2026/10/30 04:21:51.432, NVIDIA H100 PCIe, 0, 1853, 1755, 120.29"
+    }
+  ],
+  "source_sha256": {
+    "kvserve_v1/compression/runtime/csrc/kvs_compress.cu": "26538fc0688dfa9498ca335c99c316b02c1c63dc44415e77e2c4b9d9ef396500",
+    "kvserve_v1/compression/runtime/csrc/kvs_bind.cpp": "eb0b619fb5b3b178dd0eae7b628224de9087df14d577c69ca8060ffd934c7379",
+    "kvserve_v1/compression/runtime/csrc/kvs_compress.h": "f9c530abf73d1d806de2ea9ba48f1f147cd93448f30645fffd4fdf4053dd9ac4",
+    "kvserve_v1/compression/runtime/cpp_backend.py": "8b0be1c50dbb7db38c5cd76c27ece6e94a6d1fce3ade1cf35e7e1d5a850bccfb",
+    "kvserve_v1/compression/runtime/pipeline.py": "da30310f1c41328d4ddf0389736355c2435c38846d986ec76f1ce1863bfc35b3",
+    "scripts/bench_default_hadamard.py": "5d6f4d839b33be17dbf774e255a074e8105018368666064bc5e6f63fe2b953be",
+    "scripts/verify_accelerated_runtime.py": "a6ab20c8ab162a01a0b1d869365f55b6892ada1268988396cbf76708ff085ea3",
+    "scripts/bench_runtime_kernels.cu": "fc79690c974012455414b441f7c650272548063bd3d7dde92b02d8a552c889a2",
+    "tests/runtime/test_gpu.py": "04a755b3bf0ef819c8dbf250b6de1571d133a19e487ad593fa9ed384af5e8622",
+    "tests/runtime/test_hadamard.py": "da33971710221128d0ea093d10752f23bb3927b7c3af1bfc6c3292c24417b065",
+    "tests/runtime/test_config.py": "7ade2c3bc62ab6345544c72994f68451cec5d4439957eebcb9f66695f6adf014"
+  },
+  "compute_sanitizer": "/usr/local/cuda/bin/compute-sanitizer"
+}

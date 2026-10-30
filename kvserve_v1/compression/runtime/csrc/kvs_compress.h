@@ -69,6 +69,11 @@ enum KvsQuantAxis : int64_t {
   KVS_AXIS_TENSOR = 2,
 };
 
+// Out-of-place BF16 normalized FWHT. Head sizes <= 1024 preserve the input;
+// larger sizes reuse input as scratch, matching the legacy runtime.
+void kvs_hadamard_flat(int64_t input_ptr, int64_t output_ptr, int64_t rows,
+                       int head_size, int64_t stream_ptr);
+
 // Encode one chunk (one kv_part across all layers of the blob).  The caller
 // has already zeroed the u8/aux regions and uploaded the block indices.
 int kvs_encode_flat(int64_t meta_ptr, int64_t indices_ptr, int64_t num_blocks,

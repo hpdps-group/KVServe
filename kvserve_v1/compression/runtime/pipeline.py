@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import math
-import threading
 from dataclasses import dataclass
 from logging import DEBUG
 from logging import getLogger as init_logger
@@ -123,7 +122,9 @@ class CompressionPipeline:
                 "The CUDA compression backend requires one FA cache group; "
                 "use the Python backend for multiple FA groups."
             )
-        if cpp_backend.enabled() and "aggregate" not in self.stages:
+        if (cpp_backend.enabled() and "aggregate" not in self.stages) or (
+            "transformer" in self.stages and torch.version.hip is None
+        ):
             cpp_backend.load_kvs_compress(self.stream.device)
         key_sizes = {
             part.layer_name: part.head_size
@@ -270,20 +271,12 @@ class CompressionPipeline:
     ) -> None:
         """Run normalized FWHT using the two preallocated arena buffers.
 
-        Humming's JIT runtime requires its call site to be the process main
-        thread, while Mooncake serves compression requests from an asyncio
-        worker thread. The buffer-ping-pong implementation keeps the same
-        normalized Walsh-Hadamard transform without allocating a temporary
-        CUDA tensor in the request path.
+        CUDA uses a fused register/shuffle kernel on both main and worker
+        threads. Each butterfly rounds to BF16, matching the C++ runtime and
+        preserving quantization symbols. CPU retains the two-buffer reference.
         """
-        if threading.current_thread() is threading.main_thread():
-            from humming.ops import process_input
-
-            process_input(
-                inputs.reshape(-1, block_size),
-                hadamard_block_size=block_size,
-                outputs=outputs.reshape(-1, block_size),
-            )
+        if inputs.is_cuda and torch.version.hip is None:
+            cpp_backend.hadamard_transform(inputs, outputs)
             return
 
         src = inputs.reshape(-1, block_size)

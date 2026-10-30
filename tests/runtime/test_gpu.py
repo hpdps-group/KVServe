@@ -53,8 +53,6 @@ def make_manager(monkeypatch):
         dependencies = []
         if config.uses_codec:
             dependencies.append("nvidia.nvcomp")
-        if config.uses_transformer and not cpp_backend.enabled():
-            dependencies.append("humming.ops")
         for dependency in dependencies:
             if os.environ.get("VLLM_TEST_REQUIRE_MOONCAKE_COMPRESSION") == "1":
                 importlib.import_module(dependency)
@@ -524,9 +522,17 @@ def test_quantization_preserves_bf16_rounding_and_aux(
             (section.aux_scale_offset, scale),
         ):
             actual_aux = manager.slots[0].aux[offset : offset + value.numel() * 2].cpu()
-            assert torch.equal(
-                actual_aux, value.contiguous().view(torch.uint8).flatten()
-            )
+            if pattern == "zeros" and offset == section.aux_min_offset:
+                # The sign of a tied zero depends on CPU/GPU reduction order.
+                # Both signs encode the same minimum; keep all other metadata
+                # byte-exact, including the scale of an all-zero input.
+                torch.testing.assert_close(
+                    actual_aux.view(value.dtype), value.flatten(), rtol=0, atol=0
+                )
+            else:
+                assert torch.equal(
+                    actual_aux, value.contiguous().view(torch.uint8).flatten()
+                )
 
 
 @pytest.mark.parametrize(
