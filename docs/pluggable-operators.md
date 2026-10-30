@@ -118,6 +118,13 @@ from the quantizer's neutral constructor defaults. Matching DCT/Haar examples
 are in `configs/compression/*_centered_bitpack.json`. They are starting points
 for model-specific evaluation, not universal accuracy presets.
 
+The H100/Qwen3-32B smoke retained the same F1 on four questions, while some
+centered-codebook combinations increased first-logit KL. Equal task scores on
+small samples do not establish equal distortion; check the selected composition
+on the target model before using it as a production profile. Kernel gains also
+depend on GPU and head geometry; see the benchmark report for both RTX 5090 and
+H100 measurements.
+
 Use identical transform/codec profiles at both endpoints. `tilelang_fused`
 includes the old Hadamard/uniform algorithm and cannot select these operators;
 conflicting fused/centered selections raise an error. These additions target

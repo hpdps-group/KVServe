@@ -58,3 +58,39 @@ Profiler traces for warmed DCT/Haar + centered + BitPack contained **zero H2D/Dt
 The three components enter the modular library only. The vLLM Mooncake PR and its pinned fixed-workspace provider are unchanged. Supporting these algorithms in that runtime requires representation/workspace planning and separate connector validation. Mixed-outlier codebooks, dual-axis normalization and QJL remain experimental; none is added merely to increase the component count.
 
 The [operator guide](../pluggable-operators.md) documents configuration and compatibility. The [measurement summary](pluggable-operators-20261030.json) records selected sample IDs, per-seed quality, payload ratios, timings and source/result SHA-256 values. Raw outputs and evaluation scripts are retained with the local experiment artifacts; these are small-sample operator evaluations, not a replacement for a production serving benchmark.
+
+## H100 portability check
+
+The same operator sources at `6e47505` also passed **98 GPU regressions** on an
+H100 PCIe (PyTorch 2.13.0+cu130, Transformers 5.19.0), including the stream,
+CUDA Graph, output-alias and chunked-wire cases. No kernel changes or profile
+retuning were needed. The minimal-dependency GPU roundtrip passed too.
+
+A separate Qwen3-32B smoke used four complete HotpotQA questions (indices 24–27),
+seeds 101/202/303, concurrency 1 and at most 32 greedy output tokens. All six
+compressed profiles and the uncompressed reference scored **75.00 F1**. Uniform
+3-bit profiles achieved **4.92×** payload compression; centered-codebook profiles
+achieved **4.74×**, including GPU auxiliary tensors. These four questions do not
+establish broad quality equivalence. Mean first-logit KL for uniform
+Hadamard/DCT/Haar was 0.03526/0.02146/0.02891; centered-codebook combinations were
+0.04754/0.04178/0.08600. In particular, equal F1 does not mean that Haar+centered
+has equal distortion. Keep model-specific profile validation.
+
+On actual Qwen3-32B KV slices (`[2,1,8192,8,128]`, first/middle/last layer),
+median DCT/Haar forward times were **82.35/77.31 μs**, versus **316.47/313.60 μs**
+for the FP32 matrix references. Full centered+BitPack roundtrips took
+**415.75/303.33/292.06 μs** with Hadamard/DCT/Haar. These are GPU graph intervals,
+not inference latency or transfer speedups.
+
+The quantizer optimization did **not** reproduce the RTX 5090's stage gain at
+this geometry: the metadata-matched path took **56.59 μs** versus **56.24 μs** for
+the old prototype, effectively unchanged. The selected FP32-mean static profile
+took **53.96 μs**, with a different metadata budget. For synthetic H=2/D=256,
+that static profile took 29.65 μs versus 52.62 μs for the prototype. Speedup is
+hardware- and geometry-dependent. Synthetic D=256 full roundtrips still favored
+Hadamard (169.17 μs) over DCT/Haar (203.62/199.92 μs).
+
+Warmed traces again showed zero H2D/DtoH data copies. The
+[H100 measurement summary](h100-pluggable-operators-20261030.json) retains
+per-seed quality, timings and source hashes. This check does not change the
+optional status of the new components or the existing default profile.
