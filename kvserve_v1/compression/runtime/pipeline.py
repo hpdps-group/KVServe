@@ -56,11 +56,15 @@ class CompressionPipeline:
         self.head_orders = head_orders
         self.stages = stages
         self.identity_orders: set[str] = set()
-        self.kv_caches: dict[str, torch.Tensor] = {}
+        self.kv_caches: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_parts: dict[tuple[str, KVPart], torch.Tensor] = {}
         self._cpp_metas: dict[tuple[int, int], torch.Tensor] | None = None
         self.logger = init_logger(__name__)
-        if cpp_backend.enabled():
+        # Capture the process preference per instance. Two runtimes must not
+        # change one another's backend if an environment variable is changed.
+        self._requested_backend = cpp_backend.requested_backend()
+        self._selected_backend = "python"
+        if self._requested_backend == "cpp":
             if any(part.dtype is not torch.bfloat16 for part in layout.layer_parts):
                 raise ValueError(
                     "The CUDA Mooncake backend only supports BF16 KV caches."
@@ -77,7 +81,7 @@ class CompressionPipeline:
 
     def _use_cpp(self) -> bool:
         return (
-            cpp_backend.enabled()
+            self._selected_backend == "cpp"
             and "aggregate" not in self.stages
             and len(self.layout.fa_group_indices) == 1
         )
@@ -92,11 +96,38 @@ class CompressionPipeline:
             self._cpp_metas[key] = meta
         return meta
 
-    def bind_kv_caches(self, kv_caches: dict[str, torch.Tensor]) -> None:
+    def bind_kv_caches(
+        self, kv_caches: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor]],
+        *, prepare_backend: bool = True,
+    ) -> None:
         self._cpp_metas = None
         value_sizes = {part.layer_name: part.head_size for part in self.layout.parts(1)}
         for part in self.layout.parts(0):
             cache = kv_caches[part.layer_name]
+            if isinstance(cache, tuple):
+                if len(cache) != 2:
+                    raise ValueError("Separate KV binding requires a K/V pair")
+                for tensor, size in zip(
+                    cache, (part.head_size, value_sizes[part.layer_name])
+                ):
+                    if (
+                        tensor.dtype is not part.dtype
+                        or tensor.ndim != 4
+                        or tuple(tensor.shape[1:])
+                        != (
+                            part.num_heads,
+                            part.block_size // self.blocks_per_logical,
+                            size,
+                        )
+                        or tensor.stride(-1) != 1
+                        or tensor.device != self.stream.device
+                    ):
+                        raise ValueError(
+                            "Separate KV binding requires dense BF16 HND views"
+                        )
+                if cache[0].shape[0] != cache[1].shape[0]:
+                    raise ValueError("K and V must contain the same number of blocks")
+                continue
             expected = (
                 part.num_heads,
                 part.block_size // self.blocks_per_logical,
@@ -107,23 +138,20 @@ class CompressionPipeline:
                 or cache.ndim != 4
                 or tuple(cache.shape[1:]) != expected
                 or cache.stride(-1) != 1
+                or cache.device != self.stream.device
             ):
                 raise ValueError(
                     f"Unsupported compression cache for {part.layer_name}: "
                     f"expected [blocks, {expected}] with dense BF16 content, "
                     f"got {tuple(cache.shape)} / {cache.dtype}."
                 )
-        if (
-            cpp_backend.enabled()
-            and "aggregate" not in self.stages
-            and len(self.layout.fa_group_indices) != 1
-        ):
-            raise ValueError(
-                "The CUDA compression backend requires one FA cache group; "
-                "use the Python backend for multiple FA groups."
-            )
-        if (cpp_backend.enabled() and "aggregate" not in self.stages) or (
-            "transformer" in self.stages and torch.version.hip is None
+        self._selected_backend, reason = cpp_backend.select_backend(
+            self.layout, self.stages, self.stream.device, self._requested_backend
+        )
+        self.logger.info("KVServe standard backend=%s (%s)", self._selected_backend, reason)
+        if prepare_backend and (
+            self._use_cpp()
+            or ("transformer" in self.stages and torch.version.hip is None)
         ):
             cpp_backend.load_kvs_compress(self.stream.device)
         key_sizes = {
@@ -133,10 +161,14 @@ class CompressionPipeline:
         }
         self.kv_caches = {name: kv_caches[name] for name in key_sizes}
         self._cache_parts = {
-            (part.layer_name, part.kv_part): self.kv_caches[part.layer_name].narrow(
-                -1,
-                0 if part.kv_part == 0 else key_sizes[part.layer_name],
-                part.head_size,
+            (part.layer_name, part.kv_part): (
+                self.kv_caches[part.layer_name][part.kv_part]
+                if isinstance(self.kv_caches[part.layer_name], tuple)
+                else self.kv_caches[part.layer_name].narrow(
+                    -1,
+                    0 if part.kv_part == 0 else key_sizes[part.layer_name],
+                    part.head_size,
+                )
             )
             for part in self.layout.layer_parts
         }

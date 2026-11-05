@@ -330,24 +330,25 @@ __global__ void quantize_token_kernel(
   }
 }
 
+// Map consecutive output elements to consecutive threads for both quant axes.
+// Keep the two BF16 roundings used by the reference pipeline; no FMA fusion.
 __global__ void dequantize_channel_kernel(const uint8_t* __restrict__ u8,
                                           bf16* __restrict__ out,
                                           const bf16* __restrict__ aux_min,
                                           const bf16* __restrict__ aux_scale,
                                           int tokens, int heads, int head_start,
                                           int head_count, int head_size) {
-  const int column = blockIdx.x * blockDim.x + threadIdx.x;
-  if (column >= head_count * head_size) return;
-  const int h = head_start + column / head_size;
-  const int d = column % head_size;
-  const bf16 mn = aux_min[column];
-  const bf16 scale = aux_scale[column];
-  for (int t = 0; t < tokens; ++t) {
-    const int64_t idx = (static_cast<int64_t>(t) * heads + h) * head_size + d;
-    float v = static_cast<float>(u8[idx]);
-    v = to_f32(rn(v * to_f32(scale)));
-    out[idx] = rn(v + to_f32(mn));
-  }
+  const int64_t linear =
+      static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const int columns = head_count * head_size;
+  if (linear >= static_cast<int64_t>(tokens) * columns) return;
+  const int t = static_cast<int>(linear / columns);
+  const int column = static_cast<int>(linear % columns);
+  const int64_t idx = static_cast<int64_t>(t) * heads * head_size +
+                      head_start * head_size + column;
+  float v = static_cast<float>(u8[idx]);
+  v = to_f32(rn(v * to_f32(aux_scale[column])));
+  out[idx] = rn(v + to_f32(aux_min[column]));
 }
 
 __global__ void dequantize_token_kernel(const uint8_t* __restrict__ u8,
@@ -356,19 +357,17 @@ __global__ void dequantize_token_kernel(const uint8_t* __restrict__ u8,
                                         const bf16* __restrict__ aux_scale,
                                         int tokens, int heads, int head_start,
                                         int head_count, int head_size) {
-  const int t = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t >= tokens) return;
-  const bf16 mn = aux_min[t];
-  const bf16 scale = aux_scale[t];
-  const int64_t row_base = static_cast<int64_t>(t) * heads * head_size;
-  for (int h = head_start; h < head_start + head_count; ++h) {
-    for (int d = 0; d < head_size; ++d) {
-      const int64_t idx = row_base + static_cast<int64_t>(h) * head_size + d;
-      float v = static_cast<float>(u8[idx]);
-      v = to_f32(rn(v * to_f32(scale)));
-      out[idx] = rn(v + to_f32(mn));
-    }
-  }
+  const int64_t linear =
+      static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const int columns = head_count * head_size;
+  if (linear >= static_cast<int64_t>(tokens) * columns) return;
+  const int t = static_cast<int>(linear / columns);
+  const int column = static_cast<int>(linear % columns);
+  const int64_t idx = static_cast<int64_t>(t) * heads * head_size +
+                      head_start * head_size + column;
+  float v = static_cast<float>(u8[idx]);
+  v = to_f32(rn(v * to_f32(aux_scale[t])));
+  out[idx] = rn(v + to_f32(aux_min[t]));
 }
 
 // Sign multiply + inverse head permutation + write back to the KV cache.
@@ -676,15 +675,15 @@ void decode_part(const PartDesc& p, const int64_t* indices,
         const bf16* aux_scale =
             reinterpret_cast<const bf16*>(aux + s.aux_scale_offset);
         if (s.axis == KVS_AXIS_CHANNEL) {
-          const int count = s.head_count * p.head_size;
+          const int64_t count = body_tokens * s.head_count * p.head_size;
           dequantize_channel_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
               u8, reinterpret_cast<bf16*>(canonical_a), aux_min, aux_scale,
               static_cast<int>(body_tokens), p.num_heads, s.head_start,
               s.head_count, p.head_size);
           check_launch("dequantize_channel");
         } else {
-          dequantize_token_kernel<<<blocks_for(body_tokens), kThreads, 0,
-                                    stream>>>(
+          const int64_t count = body_tokens * s.head_count * p.head_size;
+          dequantize_token_kernel<<<blocks_for(count), kThreads, 0, stream>>>(
               u8, reinterpret_cast<bf16*>(canonical_a), aux_min, aux_scale,
               static_cast<int>(body_tokens), p.num_heads, s.head_start,
               s.head_count, p.head_size);

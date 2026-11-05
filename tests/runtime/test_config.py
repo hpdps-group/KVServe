@@ -137,7 +137,9 @@ def test_cache_binding_loads_backend_and_keeps_asymmetric_kv_views(
         )
         for i, size in enumerate((8, 16))
     )
-    device = torch.device("cuda", 3)
+    # This fixture uses a real CPU cache, so its stream must report CPU too.
+    # The separate JIT test above checks propagation of a CUDA worker device.
+    device = torch.device("cpu")
     pipeline = compression_pipeline.CompressionPipeline(
         SimpleNamespace(
             layer_parts=parts,

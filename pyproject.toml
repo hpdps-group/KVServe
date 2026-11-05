@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=42"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -13,9 +13,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-runtime = ["torch>=2.6", "numpy", "ninja"]
+runtime = ["torch>=2.6", "numpy", "ninja>=1.11"]
 runtime-cu12 = ["nvidia-nvcomp-cu12==5.3.0.16"]
 runtime-cu13 = ["nvidia-nvcomp-cu13==5.3.0.16"]
+runtime-fused-cu12 = ["torch>=2.6", "numpy", "ninja>=1.11", "nvidia-nvcomp-cu12==6.0.0.12"]
+runtime-fused-cu13 = ["torch>=2.6", "numpy", "ninja>=1.11", "nvidia-nvcomp-cu13==6.0.0.12"]
 fused = ["tilelang==0.1.9", "scipy>=1.10"]
 bitpack = ["torch>=2.6", "triton>=3.2"]
 operators = ["torch>=2.6", "triton>=3.2"]
@@ -27,4 +29,4 @@ include = ["kvserve_v1*"]
 [tool.setuptools.package-data]
 "kvserve_v1.compression.config.duo_config" = ["*.csv"]
 
-"kvserve_v1.compression.runtime" = ["csrc/*.cpp", "csrc/*.cu", "csrc/*.h"]
+"kvserve_v1.compression.runtime" = ["csrc/*.cpp", "csrc/*.cu", "csrc/*.h", "csrc/fused/*.cpp", "csrc/fused/*.cu", "csrc/fused/*.h", "csrc/fused/*.hpp"]

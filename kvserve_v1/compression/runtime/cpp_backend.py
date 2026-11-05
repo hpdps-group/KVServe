@@ -11,12 +11,13 @@ only session handling, the ANS codec and buffer allocation.
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch.utils.cpp_extension import load
+from torch.utils.cpp_extension import CUDA_HOME, load
 
 _CSRC = Path(__file__).resolve().parent / "csrc"
 
@@ -49,8 +50,8 @@ def _load_kvs_compress(device: torch.device | None) -> Any:
                 str(_CSRC / "kvs_bind.cpp"),
             ],
             extra_include_paths=[str(_CSRC)],
-            extra_cflags=["-O3", "-std=c++17"],
-            extra_cuda_cflags=["-O3", "-std=c++17"],
+            extra_cflags=["-O3"],
+            extra_cuda_cflags=["-O3"],
             verbose=False,
         )
     return _module
@@ -88,12 +89,86 @@ def hadamard_transform(inputs: torch.Tensor, outputs: torch.Tensor) -> None:
         )
 
 
-def enabled() -> bool:
-    """Whether the connector should route compression through C++."""
-    backend = os.environ.get("KVSERVE_COMPRESSION_BACKEND", "python")
-    if backend not in ("python", "cpp"):
+def requested_backend() -> str:
+    """Return the requested standard backend, defaulting to capability selection."""
+    backend = os.environ.get("KVSERVE_COMPRESSION_BACKEND", "auto")
+    if backend not in ("auto", "python", "cpp"):
         raise ValueError(f"Unknown KVSERVE_COMPRESSION_BACKEND: {backend!r}")
-    return backend == "cpp"
+    return backend
+
+
+def enabled() -> bool:
+    """Whether C++ is requested or eligible for automatic selection.
+
+    An automatic request is still checked against the bound cache layout and
+    device by ``select_backend``. It is not a promise that C++ will be used.
+    """
+    return requested_backend() != "python"
+
+
+def jit_toolchain_error(*, already_loaded: bool = False) -> str | None:
+    """Check the tools PyTorch's JIT needs before selecting an optional path."""
+    if already_loaded:
+        return None
+    if shutil.which("ninja") is None:
+        return "Ninja is not available on PATH"
+    cuda_home = os.environ.get("CUDA_HOME") or CUDA_HOME
+    compiler = Path(cuda_home) / "bin" / "nvcc" if cuda_home else None
+    if not (compiler is not None and compiler.is_file()) and not shutil.which("nvcc"):
+        return "the CUDA compiler is not available"
+    return None
+
+
+def select_backend(
+    layout: Any,
+    stages: tuple[str, ...],
+    device: Any,
+    requested: str | None = None,
+) -> tuple[str, str]:
+    """Select a standard backend after the actual FA groups are known.
+
+    Explicit C++ retains fail-closed layout checks. Automatic selection falls
+    back to the existing Python compression implementation for unsupported
+    layouts. Backend selection never changes the compression profile.
+    """
+    requested = requested_backend() if requested is None else requested
+    if requested not in ("auto", "python", "cpp"):
+        raise ValueError(f"Unknown KVSERVE_COMPRESSION_BACKEND: {requested!r}")
+    if requested == "python":
+        return "python", "explicitly requested"
+    if "aggregate" in stages:
+        return "python", "raw aggregate uses the existing gather/scatter path"
+
+    reason = None
+    if any(part.dtype is not torch.bfloat16 for part in layout.layer_parts):
+        reason = "The CUDA Mooncake backend only supports BF16 KV caches."
+    elif any(
+        section.axis == "tensor"
+        for part in layout.layer_parts
+        for section in part.sections
+    ):
+        reason = (
+            "The CUDA Mooncake backend does not support tensor-axis "
+            "quantization yet; use the Python backend."
+        )
+    elif len(layout.fa_group_indices) != 1:
+        reason = (
+            "The CUDA compression backend requires one FA cache group; "
+            "use the Python backend for multiple FA groups."
+        )
+    if reason is not None:
+        if requested == "cpp":
+            raise ValueError(reason)
+        return "python", reason
+    if requested == "auto" and (
+        getattr(device, "type", None) != "cuda" or torch.version.hip is not None
+    ):
+        return "python", "automatic C++ selection requires NVIDIA CUDA"
+    if requested == "auto":
+        toolchain_error = jit_toolchain_error(already_loaded=_module is not None)
+        if toolchain_error is not None:
+            return "python", toolchain_error
+    return "cpp", "explicitly requested" if requested == "cpp" else "supported CUDA layout"
 
 
 _AXIS_CODES = {"channel": 0, "token": 1, "tensor": 2}

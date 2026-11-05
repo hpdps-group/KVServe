@@ -11,10 +11,20 @@ from .memory import build_memory_plan
 from .spec import CacheSpec
 
 API_VERSION = 1
+
+
+def create_runtime(*args, **kwargs):
+    """Create the preferred supported runtime without eagerly importing CUDA extras."""
+    from .fused_runtime import create_runtime as _create_runtime
+
+    return _create_runtime(*args, **kwargs)
+
+
 __all__ = [
     "API_VERSION",
     "CacheSpec",
     "CompressionConfig",
     "CompressionRuntime",
     "build_memory_plan",
+    "create_runtime",
 ]

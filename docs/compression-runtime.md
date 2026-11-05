@@ -6,41 +6,65 @@ remain the responsibility of the transfer/storage adapter.
 
 ## Installation
 
-Install the package with `runtime` and the nvCOMP extra matching the CUDA major.
-Consumers do not need to clone KVServe or add its source tree to `PYTHONPATH`;
-the current `v1` source archive is built and installed as a normal wheel:
+Install the package using the extra matching the CUDA major and desired runtime.
+Consumers do not need to clone KVServe or change `PYTHONPATH`. For example, after
+publishing this change, replace `<commit>` below with its full commit SHA:
 
 ```bash
-uv pip install 'kvserve_v1[runtime,runtime-cu13] @ https://github.com/hpdps-group/KVServe/archive/refs/heads/v1.tar.gz'
-# CUDA 12: use runtime-cu12 instead.
-export KVSERVE_COMPRESSION_BACKEND=cpp
+# Standard runtime, CUDA 13; use runtime-cu12 for CUDA 12.
+uv pip install 'kvserve_v1[runtime,runtime-cu13] @ https://github.com/hpdps-group/KVServe/archive/<commit>.tar.gz'
+
+# Optional fused runtime, CUDA 13; use runtime-fused-cu12 for CUDA 12.
+uv pip install 'kvserve_v1[runtime-fused-cu13] @ https://github.com/hpdps-group/KVServe/archive/<commit>.tar.gz'
 ```
 
-For reproducible deployments, replace `refs/heads/v1` with a full commit SHA
-containing this dependency change. Older pinned archives retain their original
-dependencies, including Humming.
-
 For KVServe development from a local checkout, use
-`uv pip install '.[runtime,runtime-cu13]'` instead.
+`uv pip install '.[runtime,runtime-cu13]'` for the standard runtime, or
+`uv pip install '.[runtime-fused-cu13]'` for the fused runtime. The standard
+CUDA extra pins nvCOMP 5.3, while the fused extra pins nvCOMP 6.0; do not install
+both CUDA extras in the same environment. Older pinned archives retain their
+original dependencies.
 
-The runtime extras include ninja and do not install `humming-kernels`.
-Both execution backends use the same native fused BF16 Hadamard implementation
-on NVIDIA CUDA. A CUDA compiler is required; the extension builds during cache
-binding, before requests arrive. Set `KVSERVE_COMPRESSION_BACKEND=cpp` in both
-producer and consumer environments to drive the complete layer loop from C++.
-The runtime ships its JIT source files in the wheel. Importing `kvserve_v1` no
-longer loads the optional legacy vLLM connector; its existing exported name is
-resolved when requested.
+The runtime extras include Ninja. On NVIDIA CUDA, both standard execution paths
+use KVServe's BF16 Hadamard CUDA kernel. A matching CUDA compiler is required;
+JIT sources are included in the wheel and compilation occurs before requests.
 
-The execution backend defaults to `python`. Its `transformer` stage uses the
-same fused CUDA kernel on main and Mooncake worker threads, with no Humming
-dependency or main-thread JIT restriction. It rounds each butterfly to BF16,
-preserving the previous C++ and worker-thread numerics, quantized symbols and
-wire layout. Unlike the former Python main-thread Humming call, it also uses
-this BF16 operation order. Head sizes 1 through 1024 (powers of two) need one
-kernel per layer; larger power-of-two sizes retain the two-buffer fallback.
-The inverse uses the same normalized transform. No additional device scratch
-is allocated in the request path.
+## Backend selection
+
+`create_runtime()` defaults to `backend="auto"`. For a supported geometry with
+nvCOMP 6 and the JIT tools available, it selects the fused runtime; otherwise
+it selects the standard compressed runtime. Explicit `backend="fused"` rejects
+an unsupported geometry or missing dependency. A runtime or build failure after
+selection is reported, not silently converted into an uncompressed transfer.
+
+The fused path currently accepts uniform BF16 Full Attention, HND token views
+(`block_size=1` and `blocks_per_logical=1`), head size 128, 1/2/4/8/16 KV
+heads, the default Hadamard/quantizer/ANS stage order, channel K and token V
+quantization, and a chunk capacity divisible by 16 and at most 1,024 tokens.
+The encode direction needs 225 KiB of opt-in shared memory per block; a
+decode-only runtime does not impose that encode requirement. Full chunks use
+prebuilt CUDA Graphs; other valid lengths use eager fused kernels with the same
+codec. P and D may use different hardware, but must agree on the wire profile.
+
+The standard runtime chooses the C++ path by default on a supported NVIDIA
+CUDA layout with the JIT tools available: BF16, one Full Attention group, and
+channel/token quantization. Unsupported layouts or missing tools use the
+standard Python path. A Python path with a Hadamard stage still requires the
+CUDA compiler for its own native transform. Set
+`KVSERVE_COMPRESSION_BACKEND=python` or `cpp` to override this choice; an
+explicit `cpp` rejects unsupported layouts. The setting is captured per runtime
+instance and the layout choice is resolved when caches bind. Raw aggregation
+retains its separate gather/scatter path. `backend="standard"` forces the
+standard runtime and still uses this Python/C++ selector.
+
+`CompressionRuntime(...)` remains the backward-compatible standard-runtime
+constructor. Existing callers such as vLLM automatically benefit from the
+standard C++ selection when their layout is supported. Callers must explicitly
+adopt `create_runtime(...)` and satisfy its token-view contract to select the
+new fused path. Standard Python/C++ use the same wire profile; the fused
+representation has a different profile. A caller must check peer profiles and
+choose a common backend rather than assume `auto` selected the same one on
+different machines.
 
 Use `scripts/bench_default_hadamard.py` with the same captured BF16 KV to
 measure the per-layer transform from the Python default and the C++ layer loop:
@@ -67,7 +91,7 @@ workspace.
 
 ```python
 from kvserve_v1.compression.runtime import (
-    API_VERSION, CacheSpec, CompressionConfig, CompressionRuntime, build_memory_plan,
+    API_VERSION, CacheSpec, CompressionConfig, create_runtime, build_memory_plan,
 )
 
 config = CompressionConfig.from_extra_config({
@@ -80,8 +104,9 @@ specs = {name: CacheSpec(layer_index, block_size, kv_heads,
 plan = build_memory_plan(config, specs, blocks_per_logical=physical_factor,
                          tp_size=tp_size, tp_rank=tp_rank,
                          num_layers=num_layers, device=device)
-# Reserve plan.reserved_bytes before allocating the inference KV cache.
-runtime = CompressionRuntime(plan, "HND", physical_factor, device)
+# Create the runtime before sizing/allocating the inference KV cache. Its owned
+# buffers, optional output slots and Graph budget are reflected in runtime.plan.
+runtime = create_runtime(plan, "HND", physical_factor, device)
 runtime.bind_kv_caches(cache_tensors, layer_to_group)
 addresses, lengths = runtime.registered_memory()
 
@@ -101,11 +126,13 @@ head orders/signs are initialized once when caches bind. Buffers are bounded,
 preallocated and owned by the runtime. Encode/decode never perform a network
 operation. Callers can register the single pool and address its slot views.
 
-Supported caches are dense BF16 HND/LBHNC with separate K/V views, including
-different K/V head sizes. Complete blocks enter transform/quantizer/ANS; partial
-tails are transferred raw. Configure `pipeline=["codec"]` for lossless ANS-only.
-Head profiles include TP slicing and replicated KV-head mappings. CUDA supports
-a single FullAttention group; unsupported combinations fail explicitly.
+The standard runtime supports dense BF16 HND/LBHNC caches with separate K/V
+views, including different K/V head sizes. Complete blocks enter the selected
+stages; standard-runtime partial tails are transferred raw. The fused runtime
+accepts the token-level geometry described above and compresses short frames.
+Configure `pipeline=["codec"]` for lossless ANS-only. Head profiles include TP
+slicing and replicated KV-head mappings; their compatibility with the fused
+path depends on the section and geometry checks above.
 
 ## Ownership and compatibility
 

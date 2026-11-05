@@ -13,7 +13,6 @@ from typing import Any
 import torch
 
 from .config import CompressionConfig
-from .cpp_backend import enabled as cpp_backend_enabled
 from .layout import ALIGNMENT, CompressionLayout, build_compression_layout
 from .scores import HeadSelection, _load_scores, build_head_selection
 from .spec import CacheSpec, round_up
@@ -122,8 +121,8 @@ def _probe_operators(
 ) -> tuple[int, tuple[int, int], int]:
     from nvidia import nvcomp
 
-    torch.accelerator.synchronize(device)
-    free_before, _ = torch.accelerator.get_memory_info(device)
+    torch.cuda.synchronize(device)
+    free_before, _ = torch.cuda.mem_get_info(device)
     audit = _AuditAllocator(device)
     stream = torch.cuda.Stream(device=device)
     register_workspace_allocators({stream.cuda_stream: audit})
@@ -134,18 +133,14 @@ def _probe_operators(
     hadamard_input = hadamard_output = None
     try:
         if warm_hadamard:
-            from humming.ops import process_input
+            from .cpp_backend import hadamard_transform
 
             head_size = layout.layer_parts[0].head_size
             hadamard_input = torch.empty(
                 (1, head_size), dtype=torch.bfloat16, device=device
             )
             hadamard_output = torch.empty_like(hadamard_input)
-            process_input(
-                hadamard_input,
-                hadamard_block_size=head_size,
-                outputs=hadamard_output,
-            )
+            hadamard_transform(hadamard_input, hadamard_output)
 
         codec = nvcomp.Codec(algorithm="ANS", cuda_stream=stream.cuda_stream)
         probe_sizes = sorted(set(sizes))
@@ -204,9 +199,10 @@ def _probe_operators(
         hadamard_output,
     )
     gc.collect()
-    torch.accelerator.empty_cache()
-    torch.accelerator.synchronize(device)
-    free_after, _ = torch.accelerator.get_memory_info(device)
+    with torch.cuda.device(device):
+        torch.cuda.empty_cache()
+    torch.cuda.synchronize(device)
+    free_after, _ = torch.cuda.mem_get_info(device)
     retained = max(0, free_before - free_after)
     return round_up(audit.peak_bytes, ALIGNMENT), (max(max_outputs),) * 2, retained
 
@@ -269,7 +265,7 @@ def build_memory_plan(
             layout,
             device,
             layout.packed_bytes_by_part,
-            transformer and not cpp_backend_enabled(),
+            transformer,
         )
         if codec_enabled
         else (0, (0, 0), 0)

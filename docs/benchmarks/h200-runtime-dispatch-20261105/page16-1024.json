@@ -1,0 +1,115 @@
+{
+  "device": "NVIDIA H200 NVL",
+  "torch": "2.14.1+cu130",
+  "cuda": "13.0",
+  "geometry": {
+    "block_size": 16,
+    "blocks": 64,
+    "layers": 28,
+    "heads": 4,
+    "head_size": 128,
+    "rounds": 2,
+    "repeats": 3,
+    "warmups": 1,
+    "backends": [
+      "python",
+      "cpp"
+    ],
+    "output": "h200-page16-backends.json"
+  },
+  "synthetic_input": "seeded BF16 normal",
+  "rows": [
+    {
+      "round": 0,
+      "backend": "python",
+      "runtime": "CompressionRuntime",
+      "raw_bytes": 58720256,
+      "encoded_bytes": [
+        5021518,
+        4049686
+      ],
+      "encode_seconds": [
+        0.012706196008366533,
+        0.012347539988695644,
+        0.012190355992061086
+      ],
+      "decode_seconds": [
+        0.006120927006122656,
+        0.006166592997033149,
+        0.006094597003539093
+      ],
+      "encode_GBps_median": 4.75562387761119,
+      "decode_GBps_median": 9.593359950423057,
+      "same_symbols_aux_restored": true
+    },
+    {
+      "round": 0,
+      "backend": "cpp",
+      "runtime": "CompressionRuntime",
+      "raw_bytes": 58720256,
+      "encoded_bytes": [
+        5021518,
+        4049686
+      ],
+      "encode_seconds": [
+        0.0013803819892928004,
+        0.001366127995424904,
+        0.0013633549970109016
+      ],
+      "decode_seconds": [
+        0.0013282019936013967,
+        0.0013171449973015115,
+        0.0012923089961986989
+      ],
+      "encode_GBps_median": 42.98298270487925,
+      "decode_GBps_median": 44.581466824307554,
+      "same_symbols_aux_restored": true
+    },
+    {
+      "round": 1,
+      "backend": "cpp",
+      "runtime": "CompressionRuntime",
+      "raw_bytes": 58720256,
+      "encoded_bytes": [
+        5021518,
+        4049686
+      ],
+      "encode_seconds": [
+        0.0013753650127910078,
+        0.0013733050000155345,
+        0.0013487020041793585
+      ],
+      "decode_seconds": [
+        0.0013694160006707534,
+        0.0013152000028640032,
+        0.0013020469923503697
+      ],
+      "encode_GBps_median": 42.758350111108435,
+      "decode_GBps_median": 44.64739649644899,
+      "same_symbols_aux_restored": true
+    },
+    {
+      "round": 1,
+      "backend": "python",
+      "runtime": "CompressionRuntime",
+      "raw_bytes": 58720256,
+      "encoded_bytes": [
+        5021518,
+        4049686
+      ],
+      "encode_seconds": [
+        0.01247568300459534,
+        0.012288502999581397,
+        0.01218824200623203
+      ],
+      "decode_seconds": [
+        0.006072804986615665,
+        0.006110968010034412,
+        0.009082065997063182
+      ],
+      "encode_GBps_median": 4.778471063725198,
+      "decode_GBps_median": 9.60899417303108,
+      "same_symbols_aux_restored": true
+    }
+  ]
+}

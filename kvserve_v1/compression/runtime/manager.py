@@ -69,10 +69,20 @@ class CompressionRuntime:
         kv_cache_layout: str,
         blocks_per_logical: int,
         device: torch.device,
+        *,
+        codec_factory=None,
+        external_execution=False,
+        execution="both",
     ):
+        if execution not in ("both", "encode", "decode"):
+            raise ValueError("Unknown KVServe execution capability")
+        self.execution = execution
         self.plan = plan
         self.config = plan.config
         self.layout = plan.layout
+        self.output_slots = []
+        self._output_slots_allocated = False
+        self._external_execution = external_execution
         self._metadata_initialized = False
         self._owns_nvcomp_allocator = False
 
@@ -155,7 +165,7 @@ class CompressionRuntime:
             from .codec import ANSCodec
 
             self.pipelines: list[CompressionPipeline] = []
-            for stream in self.streams:
+            for slot_index, stream in enumerate(self.streams):
                 orders: dict[str, torch.Tensor] = {}
                 signs: dict[tuple[str, KVPart], torch.Tensor] = {}
                 for part in self.layout.layer_parts:
@@ -170,11 +180,15 @@ class CompressionRuntime:
                         .view(part.dtype)
                         .view(1, 1, part.num_heads, part.head_size)
                     )
-                codec = (
-                    ANSCodec(stream, self.layout.packed_bytes_by_part)
-                    if self.config.uses_codec
-                    else None
-                )
+                codec = None
+                if self.config.uses_codec:
+                    if codec_factory is None:
+                        codec = ANSCodec(stream, self.layout.packed_bytes_by_part)
+                    else:
+                        codec = codec_factory(
+                            stream, self.layout.packed_bytes_by_part,
+                            self.workspace_allocators[slot_index].buffer,
+                        )
                 self.pipelines.append(
                     CompressionPipeline(
                         layout=self.layout,
@@ -222,7 +236,7 @@ class CompressionRuntime:
 
     def bind_kv_caches(
         self,
-        kv_caches: dict[str, torch.Tensor],
+        kv_caches: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor]],
         group_indices: dict[str, int],
     ) -> None:
         layer_parts = tuple(
@@ -244,7 +258,10 @@ class CompressionRuntime:
         )
         for pipeline in self.pipelines:
             pipeline.layout = self.layout
-            pipeline.bind_kv_caches(kv_caches)
+            if self._external_execution:
+                pipeline.bind_kv_caches(kv_caches, prepare_backend=False)
+            else:
+                pipeline.bind_kv_caches(kv_caches)
         if not self._metadata_initialized:
             orders = {
                 name: torch.tensor(
@@ -304,9 +321,15 @@ class CompressionRuntime:
             "Mooncake compression cache tensors: %s",
             {
                 name: {
-                    "shape": tuple(cache.shape),
-                    "stride": tuple(cache.stride()),
-                    "data_ptr": cache.data_ptr(),
+                    "shape": tuple(cache[0].shape)
+                    if isinstance(cache, tuple)
+                    else tuple(cache.shape),
+                    "stride": tuple(cache[0].stride())
+                    if isinstance(cache, tuple)
+                    else tuple(cache.stride()),
+                    "data_ptr": [x.data_ptr() for x in cache]
+                    if isinstance(cache, tuple)
+                    else cache.data_ptr(),
                 }
                 for name, cache in kv_caches.items()
                 if name in {part.layer_name for part in self.layout.layer_parts}
@@ -343,7 +366,76 @@ class CompressionRuntime:
 
     def registered_memory(self) -> tuple[list[int], list[int]]:
         storage = self.bulk.untyped_storage()
-        return [storage.data_ptr()], [storage.nbytes()]
+        pointers, sizes = [storage.data_ptr()], [storage.nbytes()]
+        for payload, auxiliary in self.output_slots:
+            for tensor in (payload, auxiliary):
+                pointers.append(tensor.data_ptr())
+                sizes.append(tensor.numel() * tensor.element_size())
+        return pointers, sizes
+
+    def allocate_output_slots(self, count: int) -> None:
+        """Reserve connector-independent encoded output leases before KV sizing."""
+        if type(count) is not int or not 0 <= count <= 16:
+            raise ValueError("Encoded output slot count must be 0..16")
+        if self._output_slots_allocated or self._metadata_initialized:
+            raise RuntimeError("Encoded output banks must be reserved once before binding")
+        with torch.cuda.device(self.bulk.device):
+            self.output_slots = [
+                (torch.empty_like(self.slots[0].arena_a),
+                 torch.empty_like(self.slots[0].aux)) for _ in range(count)
+            ]
+        extra = sum(t.numel() * t.element_size() for bank in self.output_slots for t in bank)
+        self.plan = replace(self.plan, reserved_bytes=self.plan.reserved_bytes + extra)
+        self._output_slots_allocated = True
+
+    def _validate_output_bank(self, slot_id, output, auxiliary):
+        """Accept only the slot's own buffers or one intact output lease.
+
+        The caller owns lease scheduling and must wait for completion before
+        reusing a bank. Restricting the pair prevents aliases into active
+        compression buffers and avoids copying auxiliary data over payloads.
+        """
+        if type(slot_id) is not int or not 0 <= slot_id < len(self.slots):
+            raise ValueError("Invalid compression slot")
+        slot = self.slots[slot_id]
+        pairs = [(slot.arena_a, slot.aux), *self.output_slots]
+        if not any(output is payload and auxiliary is aux for payload, aux in pairs):
+            raise ValueError("Encoded output and auxiliary must be one Runtime-owned bank")
+        return slot
+
+    def _require_execution(self, operation):
+        if self.execution not in ("both", operation):
+            raise RuntimeError(f"KVServe {self.execution}-only runtime cannot {operation}")
+
+    def encode_into(self, slot_id, logical_ids_by_group, kv_part, *,
+                    valid_tokens_by_group, output, auxiliary) -> EncodedChunk:
+        """Standard compressed execution with a completion-fenced output copy.
+
+        This fallback may wait on the host and belongs on a caller's codec
+        worker. The fused subclass writes directly into the leased output.
+        """
+        self._require_execution("encode")
+        slot = self._validate_output_bank(slot_id, output, auxiliary)
+        stream = self.streams[slot_id]
+        aux_bytes = self.aux_bytes(kv_part, valid_tokens_by_group)
+        for tensor, capacity in ((output, slot.arena_a.numel()), (auxiliary, aux_bytes)):
+            if (tensor.device != slot.arena_a.device or tensor.dtype != torch.uint8
+                    or not tensor.is_contiguous() or tensor.numel() < capacity):
+                raise ValueError("Invalid encoded output or auxiliary bank")
+        encoded = self.encode(slot_id, logical_ids_by_group, kv_part,
+                              valid_tokens_by_group=valid_tokens_by_group)
+        encoded.event.synchronize()
+        if encoded.raw_tail_bytes:
+            raise ValueError("Leased output requires a complete compressed token body")
+        size = encoded.codec_bytes
+        if not 0 < size <= output.numel():
+            raise ValueError("Encoded payload exceeds output bank")
+        with torch.cuda.stream(stream):
+            output[:size].copy_(slot.arena_a[:size], non_blocking=True)
+            auxiliary[:aux_bytes].copy_(slot.aux[:aux_bytes], non_blocking=True)
+            slot.completion_event.record(stream)
+        return EncodedChunk(encoded.array, slot.completion_event, encoded.u8_bytes,
+                            payload_bytes=size)
 
     def encode(
         self,
@@ -353,6 +445,7 @@ class CompressionRuntime:
         *,
         valid_tokens_by_group: dict[int, int],
     ) -> EncodedChunk:
+        self._require_execution("encode")
         return self.pipelines[slot_id].encode(
             slot_id,
             logical_ids_by_group,
@@ -370,6 +463,7 @@ class CompressionRuntime:
         *,
         valid_tokens_by_group: dict[int, int],
     ) -> torch.cuda.Event:
+        self._require_execution("decode")
         expected_bytes = self.data_bytes(kv_part, valid_tokens_by_group)
         if u8_bytes != expected_bytes:
             raise ValueError("Compressed chunk has an incompatible decoded size")
@@ -390,4 +484,5 @@ class CompressionRuntime:
         for stream in self.streams:
             stream.synchronize()
         self.pipelines.clear()
+        self.output_slots.clear()
         self._release_workspace_allocator()
