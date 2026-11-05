@@ -207,6 +207,29 @@ def _probe_operators(
     return round_up(audit.peak_bytes, ALIGNMENT), (max(max_outputs),) * 2, retained
 
 
+def _probe_cpp_backend(device: torch.device, head_size: int) -> int:
+    """Warm the shared CUDA module before KV sizing, even without ANS."""
+    from .cpp_backend import hadamard_transform
+
+    torch.cuda.synchronize(device)
+    free_before, _ = torch.cuda.mem_get_info(device)
+    source = output = None
+    try:
+        with torch.cuda.device(device):
+            source = torch.empty((1, head_size), dtype=torch.bfloat16, device=device)
+            output = torch.empty_like(source)
+            hadamard_transform(source, output)
+            torch.cuda.synchronize(device)
+    finally:
+        del source, output
+        gc.collect()
+        with torch.cuda.device(device):
+            torch.cuda.empty_cache()
+        torch.cuda.synchronize(device)
+    free_after, _ = torch.cuda.mem_get_info(device)
+    return max(0, free_before - free_after)
+
+
 def build_memory_plan(
     config: CompressionConfig,
     specs: dict[str, CacheSpec],
@@ -216,10 +239,14 @@ def build_memory_plan(
     tp_rank: int = 0,
     num_layers: int = 0,
     device: torch.device | None = None,
+    warm_cpp_backend: bool = False,
 ) -> CompressionMemoryPlan | None:
     if not config.available:
         return None
     device = device or torch.device("cuda", torch.cuda.current_device())
+    nvidia_cuda = torch.device(device).type == "cuda" and torch.version.hip is None
+    if warm_cpp_backend and not nvidia_cuda:
+        raise ValueError("C++ compression warmup requires an NVIDIA CUDA device")
     transformer = config.uses_transformer
     codec_enabled = config.uses_codec
     if config.is_raw_aggregate:
@@ -248,7 +275,11 @@ def build_memory_plan(
             config.codec,
         )
 
-    scores = _load_scores(config.score_path) if config.score_path else None
+    scores = (
+        _load_scores(config.score_path)
+        if config.uses_quantizer and config.split_type == "head" and config.score_path
+        else None
+    )
     planning_config = config
     if "quantizer" not in config.pipeline:
         planning_config = replace(config, split_type="layer")
@@ -270,6 +301,14 @@ def build_memory_plan(
         if codec_enabled
         else (0, (0, 0), 0)
     )
+    if nvidia_cuda and (
+        (transformer and not codec_enabled) or (warm_cpp_backend and not transformer)
+    ):
+        # ANS probing already warms Hadamard when both stages are enabled.
+        # For a C++ pipeline without Hadamard, any supported dimension warms
+        # the same module without constraining the model's actual head size.
+        head_size = layout.layer_parts[0].head_size if transformer else 128
+        retained_bytes += _probe_cpp_backend(device, head_size)
     layout = replace(
         layout,
         arena_bytes=round_up(max(layout.arena_bytes, max(max_outputs)), ALIGNMENT),

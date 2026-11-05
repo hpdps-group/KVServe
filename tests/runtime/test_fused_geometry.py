@@ -4,6 +4,7 @@
 
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+import os
 import sys
 import threading
 from types import ModuleType, SimpleNamespace
@@ -130,6 +131,24 @@ def test_unsupported_geometry_uses_standard_compression(monkeypatch, heads, head
     assert plan.config.pipeline == ("transformer", "quantizer", "codec")
     with pytest.raises(ValueError, match="Unsupported fused geometry"):
         fused_runtime.create_runtime(plan, "HND", 1, "cuda:0", backend="fused")
+
+
+def test_d256_default_uses_standard_cpp_and_keeps_ans(monkeypatch):
+    plan = make_plan(layers=10, heads=2, head_size=256, capacity=64)
+    assert plan.config.pipeline == ("transformer", "quantizer", "codec")
+    assert plan.config.codec == "ans"
+    assert select_geometry(plan, "HND", 1)[0] is None
+    assert cpp_backend.select_backend(
+        plan.layout, plan.config.pipeline, torch.device("cuda:0"), requested="cpp"
+    )[0] == "cpp"
+    standard = Mock()
+    monkeypatch.setattr(fused_runtime, "CompressionRuntime", standard)
+    fused_runtime.create_runtime(
+        plan, "HND", 1, "cuda:0", standard_backend="cpp"
+    )
+    standard.assert_called_once_with(
+        plan, "HND", 1, "cuda:0", execution="both", pipeline_backend="cpp"
+    )
 
 
 def test_low_shared_memory_uses_standard_compression(monkeypatch):
@@ -423,3 +442,107 @@ def test_default_probe_warms_actual_hadamard_without_humming(monkeypatch, backen
     fake_codec.encode.assert_called_once()
     fake_codec.decode.assert_called_once()
     unregister.assert_called_once_with([123])
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pipeline": ["quantizer", "codec"]},
+        {"pipeline": ["transformer", "quantizer"]},
+        {"pipeline": ["codec"]},
+        {"high_key_num_levels": 16},
+    ],
+)
+def test_standard_factory_passes_cpp_backend_without_changing_environment(monkeypatch, changes):
+    plan = make_plan(**changes)
+    standard = Mock()
+    monkeypatch.setattr(fused_runtime, "CompressionRuntime", standard)
+    monkeypatch.setenv("KVSERVE_COMPRESSION_BACKEND", "python")
+    before = dict(os.environ)
+    result = fused_runtime.create_runtime(
+        plan, "HND", 1, "cuda:0", backend="standard", output_slots=4,
+        execution="encode", standard_backend="cpp",
+    )
+    standard.assert_called_once_with(
+        plan, "HND", 1, "cuda:0", execution="encode", pipeline_backend="cpp"
+    )
+    result.allocate_output_slots.assert_called_once_with(4)
+    assert dict(os.environ) == before
+
+
+def test_default_auto_still_selects_fused_when_cpp_fallback_is_configured(monkeypatch):
+    plan = make_plan()
+    fused = Mock()
+    standard = Mock()
+    monkeypatch.setattr(fused_runtime, "FusedCompressionRuntime", fused)
+    monkeypatch.setattr(fused_runtime, "CompressionRuntime", standard)
+    before = dict(os.environ)
+    result = fused_runtime.create_runtime(
+        plan, "HND", 1, "cuda:0", backend="auto", execution="decode",
+        standard_backend="cpp",
+    )
+    assert result is fused.return_value
+    standard.assert_not_called()
+    assert dict(os.environ) == before
+
+
+@pytest.mark.parametrize(
+    "stages,expect_ans,expect_cpp",
+    [
+        (("transformer", "quantizer", "codec"), True, False),
+        (("quantizer", "codec"), True, True),
+        (("codec",), True, True),
+        (("transformer", "quantizer"), False, True),
+        (("quantizer",), False, True),
+    ],
+)
+def test_standard_cpp_probe_is_reserved_for_each_stage_profile(
+    monkeypatch, stages, expect_ans, expect_cpp
+):
+    config = CompressionConfig.from_extra_config({"compression": {
+        "enable-compression-pipeline": True,
+        "slot_count": 2,
+        "logical_blocks_per_chunk": 16,
+        "pipeline": stages,
+    }})
+    # Without Hadamard, the model does not need a power-of-two head size. The
+    # CUDA module is warmed with its own valid 128-wide probe instead.
+    head_size = 128 if "transformer" in stages else 96
+    specs = {"layer.0": CacheSpec(0, 1, 4, head_size, torch.bfloat16)}
+    ans_probe = Mock(return_value=(16, (64, 64), 9))
+    cpp_probe = Mock(return_value=13)
+    monkeypatch.setattr(memory, "_probe_operators", ans_probe)
+    monkeypatch.setattr(memory, "_probe_cpp_backend", cpp_probe)
+
+    device = torch.device("cuda", 0)
+    plan = memory.build_memory_plan(
+        config, specs, num_layers=1, device=device, warm_cpp_backend=True
+    )
+
+    assert ans_probe.call_count == int(expect_ans)
+    assert cpp_probe.call_count == int(expect_cpp)
+    if expect_ans:
+        assert ans_probe.call_args.args[3] is ("transformer" in stages)
+    if expect_cpp:
+        cpp_probe.assert_called_once_with(device, 128)
+        assert plan.retained_driver_bytes >= 13
+    assert plan.reserved_bytes >= plan.retained_driver_bytes
+
+
+@pytest.mark.parametrize("device,hip", [("cpu", None), ("cuda:0", "6.0")])
+def test_legacy_non_nvidia_transform_plan_does_not_warm_cuda_cpp(monkeypatch, device, hip):
+    monkeypatch.setattr(torch.version, "hip", hip)
+    probe = Mock(side_effect=AssertionError("CUDA C++ warmup is unavailable"))
+    monkeypatch.setattr(memory, "_probe_cpp_backend", probe)
+    config = CompressionConfig.from_extra_config({"compression": {
+        "enable-compression-pipeline": True,
+        "pipeline": ["transformer", "quantizer"],
+        "logical_blocks_per_chunk": 16,
+    }})
+    specs = {"layer.0": CacheSpec(0, 1, 2, 128, torch.bfloat16)}
+    plan = memory.build_memory_plan(config, specs, num_layers=1, device=torch.device(device))
+    assert plan is not None
+    probe.assert_not_called()
+    with pytest.raises(ValueError, match="requires an NVIDIA CUDA device"):
+        memory.build_memory_plan(config, specs, num_layers=1, device=torch.device(device),
+                                 warm_cpp_backend=True)

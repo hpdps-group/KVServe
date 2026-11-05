@@ -365,11 +365,14 @@ def _fused_dependency_error():
 
 
 def create_runtime(plan, cache_layout, blocks_per_logical, device, *, backend='auto',
-                   output_slots=0, graph_lengths=None, execution='both'):
+                   output_slots=0, graph_lengths=None, execution='both',
+                   standard_backend=None):
     if backend not in ('auto', 'standard', 'fused'):
         raise ValueError('Unknown KVServe execution backend')
     if execution not in ('both', 'encode', 'decode'):
         raise ValueError('Unknown KVServe execution capability')
+    if standard_backend not in (None, 'python', 'cpp'):
+        raise ValueError('Unknown KVServe standard pipeline backend')
     geometry, reason = select_geometry(plan, cache_layout, blocks_per_logical)
     if backend == 'fused' and geometry is None:
         raise ValueError('Unsupported fused geometry: ' + reason)
@@ -394,7 +397,10 @@ def create_runtime(plan, cache_layout, blocks_per_logical, device, *, backend='a
                 raise ValueError('Fused head kernel requires 225 KiB opt-in shared memory')
             reason = 'device does not provide 225 KiB opt-in shared memory'
     logger.info('Using standard KVServe compression execution: %s', reason)
+    kwargs = {'execution': execution}
+    if standard_backend is not None:
+        kwargs['pipeline_backend'] = standard_backend
     runtime = CompressionRuntime(plan, cache_layout, blocks_per_logical, device,
-                                 execution=execution)
+                                 **kwargs)
     runtime.allocate_output_slots(output_slots)
     return runtime

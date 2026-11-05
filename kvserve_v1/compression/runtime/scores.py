@@ -60,7 +60,8 @@ def build_head_selection(
         )
 
     if scores is None:
-        assert config.score_path is not None
+        if not config.score_path:
+            raise ValueError("Head split requires a score_path or head scores.")
         scores = _load_scores(config.score_path)
     if scores.ndim != 2 or not np.isfinite(scores).all():
         raise ValueError(

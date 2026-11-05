@@ -142,7 +142,7 @@ def select_backend(
     reason = None
     if any(part.dtype is not torch.bfloat16 for part in layout.layer_parts):
         reason = "The CUDA Mooncake backend only supports BF16 KV caches."
-    elif any(
+    elif "quantizer" in stages and any(
         section.axis == "tensor"
         for part in layout.layer_parts
         for section in part.sections

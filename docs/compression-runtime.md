@@ -57,6 +57,14 @@ instance and the layout choice is resolved when caches bind. Raw aggregation
 retains its separate gather/scatter path. `backend="standard"` forces the
 standard runtime and still uses this Python/C++ selector.
 
+Callers can select this per instance without changing the process environment:
+pass `standard_backend="cpp"` or `"python"` to `create_runtime`, or
+`pipeline_backend` to `CompressionRuntime`. An explicit `"cpp"` rejects
+unsupported layouts and propagates JIT failures. The default `None` preserves
+the existing automatic/environment-selected behavior. To warm the C++ CUDA
+module before inference-cache sizing and include retained driver memory in the
+plan, pass `warm_cpp_backend=True` to `build_memory_plan` on NVIDIA CUDA.
+
 `CompressionRuntime(...)` remains the backward-compatible standard-runtime
 constructor. Existing callers such as vLLM automatically benefit from the
 standard C++ selection when their layout is supported. Callers must explicitly
@@ -99,6 +107,8 @@ config = CompressionConfig.from_extra_config({
                     "logical_blocks_per_chunk": 64},
 })
 # Supply an explicit layer index; names need not follow a model naming convention.
+# For hybrid models use original global full-attention indices, not a dense
+# renumbering, and set num_layers to the total number of model layers.
 specs = {name: CacheSpec(layer_index, block_size, kv_heads,
                         key_head_size, dtype, value_head_size)}
 plan = build_memory_plan(config, specs, blocks_per_logical=physical_factor,

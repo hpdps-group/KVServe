@@ -38,7 +38,10 @@ class CompressionPipeline:
         signs: dict[tuple[str, KVPart], torch.Tensor],
         head_orders: dict[str, torch.Tensor],
         stages: tuple[str, ...] = ("transformer", "quantizer", "codec"),
+        pipeline_backend: str | None = None,
     ):
+        if pipeline_backend not in (None, "python", "cpp"):
+            raise ValueError("Unknown KVServe pipeline backend")
         if kv_cache_layout == "LBHNC":
             kv_cache_layout = "HND"
         if kv_cache_layout != "HND":
@@ -55,6 +58,7 @@ class CompressionPipeline:
         self.signs = signs
         self.head_orders = head_orders
         self.stages = stages
+        self.pipeline_backend = pipeline_backend
         self.identity_orders: set[str] = set()
         self.kv_caches: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_parts: dict[tuple[str, KVPart], torch.Tensor] = {}
@@ -62,14 +66,18 @@ class CompressionPipeline:
         self.logger = init_logger(__name__)
         # Capture the process preference per instance. Two runtimes must not
         # change one another's backend if an environment variable is changed.
-        self._requested_backend = cpp_backend.requested_backend()
+        self._requested_backend = (
+            cpp_backend.requested_backend()
+            if pipeline_backend is None
+            else pipeline_backend
+        )
         self._selected_backend = "python"
         if self._requested_backend == "cpp":
             if any(part.dtype is not torch.bfloat16 for part in layout.layer_parts):
                 raise ValueError(
                     "The CUDA Mooncake backend only supports BF16 KV caches."
                 )
-            if any(
+            if "quantizer" in self.stages and any(
                 section.axis == "tensor"
                 for part in layout.layer_parts
                 for section in part.sections

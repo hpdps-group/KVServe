@@ -73,9 +73,12 @@ class CompressionRuntime:
         codec_factory=None,
         external_execution=False,
         execution="both",
+        pipeline_backend=None,
     ):
         if execution not in ("both", "encode", "decode"):
             raise ValueError("Unknown KVServe execution capability")
+        if pipeline_backend not in (None, "python", "cpp"):
+            raise ValueError("Unknown KVServe pipeline backend")
         self.execution = execution
         self.plan = plan
         self.config = plan.config
@@ -200,6 +203,7 @@ class CompressionRuntime:
                         signs=signs,
                         head_orders=orders,
                         stages=self.config.pipeline,
+                        pipeline_backend=pipeline_backend,
                     )
                 )
             self.head_orders = self.pipelines[0].head_orders
@@ -369,8 +373,10 @@ class CompressionRuntime:
         pointers, sizes = [storage.data_ptr()], [storage.nbytes()]
         for payload, auxiliary in self.output_slots:
             for tensor in (payload, auxiliary):
-                pointers.append(tensor.data_ptr())
-                sizes.append(tensor.numel() * tensor.element_size())
+                size = tensor.numel() * tensor.element_size()
+                if size:
+                    pointers.append(tensor.data_ptr())
+                    sizes.append(size)
         return pointers, sizes
 
     def allocate_output_slots(self, count: int) -> None:
