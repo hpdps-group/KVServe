@@ -83,11 +83,17 @@ class ExecutionPlan {
     checked(cudaEventRecord(reinterpret_cast<cudaEvent_t>(completion), reinterpret_cast<cudaStream_t>(stream_)));
   }
   void decode(NativeANS& ans, uintptr_t source, uintptr_t quant, size_t bytes,
-              uintptr_t completion, int tokens) {
+              uintptr_t completion, int tokens, bool standard_layout) {
     DeviceGuard guard(device_);
-    validate(tokens, bytes);
+    if (tokens < 1 || tokens > capacity_ ||
+        bytes != expected(standard_layout ? capacity_ : tokens))
+      throw std::invalid_argument("Invalid fused decode layout or length");
     ans.decode(source, quant, bytes);
-    launch(tokens, false);
+    if (standard_layout && tokens != capacity_)
+      kvs_fused_decode(cpu_, gpu_, host_ids_, gpu_ids_, tokens, part_, capacity_,
+                       heads_, stream_, true);
+    else
+      launch(tokens, false);
     checked(cudaEventRecord(reinterpret_cast<cudaEvent_t>(completion), reinterpret_cast<cudaStream_t>(stream_)));
   }
   ~ExecutionPlan() { if (!graphs_.empty()) { try { close(); } catch (...) {} } }
@@ -105,7 +111,7 @@ class ExecutionPlan {
   }
   void launch_eager(int tokens, bool encode) {
     if (encode) kvs_fused_encode(cpu_, gpu_, host_ids_, gpu_ids_, tokens, part_, capacity_, heads_, stream_);
-    else kvs_fused_decode(cpu_, gpu_, host_ids_, gpu_ids_, tokens, part_, capacity_, heads_, stream_);
+    else kvs_fused_decode(cpu_, gpu_, host_ids_, gpu_ids_, tokens, part_, capacity_, heads_, stream_, false);
   }
   void launch(int tokens, bool encode) {
     auto found = graphs_.find(std::make_pair(encode, tokens));

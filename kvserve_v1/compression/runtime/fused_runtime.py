@@ -227,6 +227,7 @@ class FusedCompressionRuntime(CompressionRuntime):
                         f'pre-reserved startup budget {budget} bytes')
                 logger.info('KVServe Graph startup: lengths=%s retained=%d reserved=%d bytes',
                             self.graph_lengths, max(0, before - after), budget)
+                self.standard_wire_profile = self.wire_profile
                 self.wire_profile = hashlib.sha256(
                     ('kvserve-u8-layer-stride-bucket16-v1:' + self.wire_profile).encode()).hexdigest()
             self._state = 'bound'
@@ -302,7 +303,7 @@ class FusedCompressionRuntime(CompressionRuntime):
             lock.release()
 
     def decode(self, slot_id, logical_ids_by_group, kv_part, codec_bytes, u8_bytes, *,
-               valid_tokens_by_group):
+               valid_tokens_by_group, wire_profile=None):
         self._require_execution('decode')
         if type(slot_id) is not int or not 0 <= slot_id < len(self.slots):
             raise ValueError('Invalid fused slot')
@@ -312,14 +313,20 @@ class FusedCompressionRuntime(CompressionRuntime):
         try:
             n = self._frame(slot_id, logical_ids_by_group, kv_part, valid_tokens_by_group)
             slot, pipe = self.slots[slot_id], self.pipelines[slot_id]
-            if u8_bytes != self.geometry.packed_bytes(n) or not 0 < codec_bytes <= slot.arena_a.numel():
+            if wire_profile is None:
+                wire_profile = self.wire_profile
+            if wire_profile not in (self.wire_profile, self.standard_wire_profile):
+                raise ValueError('Invalid received compression profile')
+            standard_layout = wire_profile == self.standard_wire_profile
+            expected_tokens = self.geometry.capacity if standard_layout else n
+            if u8_bytes != self.geometry.packed_bytes(expected_tokens) or not 0 < codec_bytes <= slot.arena_a.numel():
                 raise ValueError('Invalid received fused payload size')
             self._generations[slot_id] += 1
             with torch.cuda.device(self.device):
                 self._plans[slot_id, kv_part].decode(
                     pipe.codec._native_ans, slot.arena_a.data_ptr(),
                     slot.arena_b.data_ptr() + self.layout.u8_base, u8_bytes,
-                    slot.completion_event.cuda_event, n,
+                    slot.completion_event.cuda_event, n, standard_layout,
                 )
             return slot.completion_event
         except BaseException:

@@ -11,7 +11,7 @@
 // selects their CUDA device, and keeps all owners alive until stream completion.
 // No allocation, registration, synchronization or default-stream work occurs
 // in either serving entry point. The decode input is already ANS-decompressed
-// in arena B. Both entry points use compact ceil(tokens/16)*16 layer strides.
+// in arena B. Decode accepts either compact or capacity-sized layer strides.
 // Packed arenas must therefore fit the padded capacity, including an odd full
 // capacity if a direct ABI caller uses one. Python capability may be stricter.
 extern "C" {
@@ -21,5 +21,5 @@ void kvs_fused_encode(int64_t meta_cpu, int64_t meta_gpu, int64_t host_ids,
                       int heads, int64_t stream);
 void kvs_fused_decode(int64_t meta_cpu, int64_t meta_gpu, int64_t host_ids,
                       int64_t gpu_ids, int tokens, int part, int capacity,
-                      int heads, int64_t stream);
+                      int heads, int64_t stream, bool standard_layout);
 }

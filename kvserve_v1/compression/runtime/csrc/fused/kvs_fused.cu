@@ -521,12 +521,13 @@ extern "C" void kvs_fused_encode(int64_t meta_cpu, int64_t meta_gpu,
 
 extern "C" void kvs_fused_decode(int64_t meta_cpu, int64_t meta_gpu,
                                    int64_t host_ids, int64_t gpu_ids, int tokens,
-                                   int part, int capacity, int heads, int64_t stream) {
+                                   int part, int capacity, int heads, int64_t stream,
+                                   bool standard_layout) {
   const int layers = validate_fused(meta_cpu, meta_gpu, host_ids, gpu_ids,
                                      tokens, part, capacity, heads, stream);
   const auto cuda_stream = reinterpret_cast<cudaStream_t>(stream);
   upload_indices(host_ids, gpu_ids, tokens, cuda_stream);
-  const int compact_tokens = (tokens + 15) / 16 * 16;
+  const int compact_tokens = standard_layout ? capacity : (tokens + 15) / 16 * 16;
   fused_restore<<<dim3(ceil_div(static_cast<int64_t>(tokens) * heads, kRestoreWarps), layers),
                     kRestoreWarps * kWarpSize, 0, cuda_stream>>>(
       reinterpret_cast<const int64_t*>(meta_gpu),
